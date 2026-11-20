@@ -1,0 +1,50 @@
+function out = zc1bit_parameters(value)
+%ZC1BIT_PARAMETERS 仅提取实际计算参数用于断点恢复核对。
+% 严格排除路径、版本号、时间戳、缓存上限与并行 worker 数等非计算参数。
+
+table_cols = [ ...
+    "SampleID", "DatasetIdx", "LocalSampleIdx", "Dataset", "File", "CStart", "Split", ...
+    "Branch", "Axis", "GroupName", "Q", "Range_q", "Azimuth_q", ...
+    "ThresholdType", "ParamTag", "As", "STR_dB", "FrOverBr", "FaOverBa", "Phi0", "ThresholdKey", ...
+    "RuleKey", "DecisionMode", "RemoveDC", "VariantKey", "TaskKey"];
+
+if istable(value)
+    vars = string(value.Properties.VariableNames);
+    keep = table_cols(ismember(table_cols, vars));
+    out = value(:, keep);
+    return;
+end
+
+out = struct();
+if ~isstruct(value)
+    return;
+end
+
+scalar_names = [ ...
+    table_cols, ...
+    "seed", "dataset_names", "num_samples_per_dataset", "raw_decimation_step", "nyquist_margin", ...
+    "enl_dataset_names", "enl_window_size", "enl_stride", "entropy_num_bins", ...
+    "branches", "range_allocations", "azimuth_allocations", ...
+    "range_threshold_types", "azimuth_threshold_types", ...
+    "rt_as_values", "sft_str_offsets", "phi0", ...
+    "rules", "decision_modes", "remove_dc_options", "include_b0_dc", ...
+    "fc", "B", "Fs", "prf", "R0", "C", "v", "Tp", "Ta", ...
+    "nrn", "nan", "gama", "lambda", "R_total", "A_num", "Ba", "Bd", "Da"];
+
+for name = scalar_names
+    if isfield(value, name)
+        out.(name) = value.(name);
+    end
+end
+
+nested_names = ["screen", "sft_baselines", "S60", "imaging", "parameters", "threshold", "variants", "manifest", "config"];
+for name = nested_names
+    if isfield(value, name)
+        if istable(value.(name)) || isstruct(value.(name))
+            out.(name) = zc1bit_parameters(value.(name));
+        else
+            out.(name) = value.(name);
+        end
+    end
+end
+end
