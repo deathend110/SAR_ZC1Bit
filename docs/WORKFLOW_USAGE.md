@@ -27,17 +27,19 @@ out = run_zc1bit_workflow(cfg);
 ```matlab
 cfg = zc1bit_config();
 cfg.stage = "screen";
-cfg.screen.workers = 0; % 可设为正整数以启用 thread parpool，失败时自动退化串行
-out = run_zc1bit_workflow(cfg); % 或直接调用 run_zc1bit_screen(cfg)
+cfg.runtime.cache_gb = 5;         % 4–6 GB 内存缓存预算（复用单轮读盘与同倍率 signal_up）
+cfg.runtime.preload_signals = true;
+out = run_zc1bit_workflow(cfg);   % 或直接调用 run_zc1bit_screen(cfg)
 ```
 
 - **数据隔离**：阶段一**仅在 35 个校准样本**上执行，35 个测试样本保持完全隔离。
-- **实验覆盖**：
-  - 距离单向分支（dim 1）：`R1A1`、`R4A1`、`R9A1` × `{ZT, RT, RSFT, 2D-SFT}`；
-  - 方位单向分支（dim 2）：`R1A1`、`R1A4`、`R1A9` × `{ZT, RT, ASFT, 2D-SFT}`；
+- **实验覆盖（36 阈值配置 × 42 规则变体）**：
+  - 距离单向分支（dim 1）：`R1A1`、`R4A1`、`R9A1` × `{ZT, RT, RSFT}`；
+  - 方位单向分支（dim 2）：`R1A1`、`R1A4`、`R1A9` × `{ZT, RT, ASFT}`；
   - 候选规则：`B0` + `R1`–`R9` + `L1`；
   - 正交开关：并行判定（`parallel`）vs. 串行原地判定（`serial`）、原始输出（`raw`）vs. 去 DC（`dc_removed`）。
-- **断点恢复**：按“阈值配置 × 场景”原子保存于 `results_zc1bit/checkpoints/screen/<ThresholdKey>/<SceneKey>.mat`。恢复时**仅核对实际计算参数**，修改路径、worker 数或重启 MATLAB 均可直接复用已完成进度。
+  - *注：双向 BARU 与 `2D-SFT` 保留底层源码接口作后续可选扩展，默认不运行。*
+- **单核内存优先与断点恢复**：全程保持单核无并行池运行；存在未完成项时对 7 个 `.mat` 仅顺序读 1 轮并按 `cfg.runtime.cache_gb`（推荐 4–6 GB）复用上采样结果；按 `ThresholdKey` 扁平原子保存于 `results_zc1bit/checkpoints/screen/<ThresholdKey>.mat`（默认 `-v7` 格式），全命中时 0 次读盘。恢复时**仅核对实际计算参数**，修改路径、`runtime.cache_gb`、`preload_signals` 或重启 MATLAB 均可直接复用已完成进度。
 - **阶段一产出**（`results_zc1bit/screen/`）：
   - `screen_detail.csv`：逐样本、逐任务明细（含 PSNR、SSIM、Entropy、ENL、`|ENL - GT_ENL|`、ZeroRatio、I/Q 均值偏置）。
   - `screen_summary.csv`：按任务汇总均值/标准差及相对同阈值 `B0` 的配对差值与双侧 Wilcoxon $p$-value。

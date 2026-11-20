@@ -1,7 +1,11 @@
 function out = zc1bit_screen_impl(cfg)
-%ZC1BIT_SCREEN_IMPL 阶段一（置零规则快筛）核心工作流实现。
+%ZC1BIT_SCREEN_IMPL 阶段一（置零规则快筛）单核内存优先工作流实现。
 % 严格仅在 35 个校准样本（奇数 LocalSampleIdx）上执行，绝不触碰测试集。
-% 按“阈值配置 × 场景”原子保存 checkpoint，中断恢复仅核对实际计算参数。
+% 设计要点：
+%   1. 单核顺序执行（不使用 MATLAB 并行池），避免进程间大矩阵拷贝与内存带宽争抢；
+%   2. 先扫描扁平检查点 checkpoints/screen/<ThresholdKey>.mat，全命中时 0 次读取回波文件；
+%   3. 存在未完成项时对回波文件仅顺序读 1 轮（35 样本约 403 MB 常驻内存），并外层按 (Range_q, Azimuth_q)
+%      在 cfg.runtime.cache_gb（推荐 4-6 GB）预算内复用 signal_up，最后按 ThresholdKey 原子落盘 -v7。
 
 if nargin == 0
     cfg = zc1bit_config();
@@ -19,101 +23,148 @@ if isempty(cal_manifest)
     error("zc1bit:EmptyCalibration", "样本清单中未找到校准样本。");
 end
 
-% 1. 准备或恢复校准集 GT 与固定 64x64 ENL ROI（不读取测试集）
-gt_cache = load_or_build_cal_gt_cache(cfg, S60, cal_manifest, p);
+[cache_gb, preload_signals] = resolve_runtime_options(cfg);
+cache_budget_bytes = cache_gb * (1024 ^ 3);
+
+use_fast = true;
+if isfield(cfg.screen, "use_fast_path")
+    use_fast = logical(cfg.screen.use_fast_path);
+end
+
+n_tg = height(threshold_groups);
+n_cal = height(cal_manifest);
+n_var = height(variant_specs);
+
+% 1. 先扫描全部扁平 ThresholdKey 检查点，仅汇总未完成任务
+detail_by_tg = cell(n_tg, 1);
+completed_tg = false(n_tg, 1);
+cp_dir = fullfile(p.checkpoints, "screen");
+
+for tg_idx = 1:n_tg
+    tg = threshold_groups(tg_idx, :);
+    cp_path = fullfile(cp_dir, tg.ThresholdKey + ".mat");
+    if ~isfile(cp_path)
+        continue;
+    end
+    state = zc1bit_load_state(cp_path, struct());
+    if isfield(state, "completed") && isequal(state.completed, true) && isfield(state, "detail_rows")
+        expected_params = build_tg_expected_params(tg, variant_specs, cal_manifest, S60, cfg);
+        zc1bit_check_parameters(state.parameters, expected_params, ...
+            sprintf("阶段一检查点(%s)", tg.ThresholdKey));
+        detail_by_tg{tg_idx} = state.detail_rows;
+        completed_tg(tg_idx) = true;
+    end
+end
+
+% 2. 按需加载或构建校准集 GT 缓存；仅当存在未完成项或 GT 缓存缺失时顺序读盘 1 轮
+gt_cache_path = fullfile(cp_dir, "gt_cal_cache.mat");
+gt_cache = try_load_cal_gt_cache(cfg, S60, cal_manifest, gt_cache_path);
+cal_signals = {};
+
+if any(~completed_tg) || isempty(gt_cache)
+    cal_signals = preload_all_calibration_signals(cal_manifest, S60, cfg.raw_decimation_step);
+    if isempty(gt_cache)
+        gt_cache = build_and_save_cal_gt_cache(cfg, S60, cal_manifest, cal_signals, gt_cache_path);
+    end
+end
+
 if ~isfolder(p.screen)
     mkdir(p.screen);
 end
 writetable(gt_cache.roi_manifest, fullfile(p.screen, "screen_cal_enl_roi_manifest.csv"));
 
-% 2. 构建频域直裁快路径上下文（若启用）
-use_fast = true;
-if isfield(cfg.screen, "use_fast_path")
-    use_fast = logical(cfg.screen.use_fast_path);
-end
-fast_ctx = [];
-if use_fast
-    fast_ctx = build_fast_focus_context(S60, threshold_groups.Range_q, threshold_groups.Azimuth_q);
-end
+fprintf("\n=== 阶段一规则快筛：%d 阈值配置 × %d 变体（%d 校准样本 | 已命中 %d/%d 检查点 | cache=%.1f GB）===\n", ...
+    n_tg, n_var, n_cal, sum(completed_tg), n_tg, cache_gb);
 
-% 3. 解析并行 worker（失败时自动降级串行，数值结果完全一致）
-workers = resolve_parallel_workers(cfg.screen.workers);
-
-% 4. 按“阈值配置 × 场景”执行并原子落盘
-scenes = unique(cal_manifest.Dataset, "stable");
-n_tg = height(threshold_groups);
-n_scenes = numel(scenes);
-n_var = height(variant_specs);
-
-all_detail_parts = cell(n_tg * n_scenes, 1);
-part_ptr = 0;
-
-fprintf("\n=== 阶段一规则快筛：%d 阈值配置 × %d 场景 × %d 变体（仅 %d 校准样本）===\n", ...
-    n_tg, n_scenes, n_var, height(cal_manifest));
-
-scene_echo_cache = struct("scene", "", "signals", {{}}, "sample_ids", []);
-
-for tg_idx = 1:n_tg
-    tg = threshold_groups(tg_idx, :);
-    grid = resolve_sampling_grid(tg.Range_q, tg.Azimuth_q, [S60.nrn, S60.nan], S60);
-    sft_carrier = [];
-    if ismember(tg.ThresholdType, ["RSFT", "ASFT", "2D-SFT"])
-        cparams = struct("fr_over_Br", tg.FrOverBr, "fa_over_Ba", tg.FaOverBa, "phi0", tg.Phi0);
-        sft_carrier = build_sft_carrier(grid, cparams, S60);
+% 3. 仅对未完成的 ThresholdKey 按 (Range_q, Azimuth_q) 外层分组并复用上采样回波
+pending_indices = find(~completed_tg);
+if ~isempty(pending_indices)
+    fast_ctx = [];
+    if use_fast
+        fast_ctx = build_fast_focus_context( ...
+            S60, threshold_groups.Range_q(pending_indices), threshold_groups.Azimuth_q(pending_indices));
     end
 
-    for s_idx = 1:n_scenes
-        scene_name = scenes(s_idx);
-        scene_key = make_scene_key(scene_name);
-        scene_mask = (cal_manifest.Dataset == scene_name);
-        scene_manifest = cal_manifest(scene_mask, :);
+    base_info = whos("cal_signals");
+    base_bytes = base_info.bytes;
+    if isa(cal_signals{1}, "single")
+        elem_bytes = 8;
+    else
+        elem_bytes = 16;
+    end
 
-        cp_path = fullfile(p.checkpoints, "screen", tg.ThresholdKey, scene_key + ".mat");
-        expected_params = struct( ...
-            "threshold", zc1bit_parameters(tg), ...
-            "variants", zc1bit_parameters(variant_specs), ...
-            "manifest", zc1bit_parameters(scene_manifest), ...
-            "S60", zc1bit_parameters(S60), ...
-            "enl_window_size", cfg.enl_window_size, ...
-            "enl_stride", cfg.enl_stride, ...
-            "entropy_num_bins", cfg.entropy_num_bins);
+    pending_allocs = unique([ ...
+        threshold_groups.Range_q(pending_indices), ...
+        threshold_groups.Azimuth_q(pending_indices)], "rows", "stable");
 
-        part_ptr = part_ptr + 1;
-        if isfile(cp_path)
-            state = zc1bit_load_state(cp_path, struct());
-            if isfield(state, "completed") && isequal(state.completed, true) && isfield(state, "detail_rows")
-                zc1bit_check_parameters(state.parameters, expected_params, ...
-                    sprintf("阶段一检查点(%s/%s)", tg.ThresholdKey, scene_key));
-                all_detail_parts{part_ptr} = state.detail_rows;
-                continue;
+    for a_idx = 1:size(pending_allocs, 1)
+        rq = pending_allocs(a_idx, 1);
+        aq = pending_allocs(a_idx, 2);
+        group_tg_idx = pending_indices( ...
+            threshold_groups.Range_q(pending_indices) == rq & ...
+            threshold_groups.Azimuth_q(pending_indices) == aq);
+        grid = resolve_sampling_grid(rq, aq, [S60.nrn, S60.nan], S60);
+
+        if rq == 1 && aq == 1
+            % Q=1 零上采样开销，直接复用内存中的基带回波
+            for tg_idx = group_tg_idx(:).'
+                detail_rows = run_tg_with_up_signals( ...
+                    cfg, S60, grid, threshold_groups(tg_idx, :), variant_specs, ...
+                    cal_manifest, cal_signals, gt_cache, fast_ctx, use_fast);
+                save_tg_checkpoint(cp_dir, threshold_groups(tg_idx, :), variant_specs, ...
+                    cal_manifest, S60, cfg, detail_rows);
+                detail_by_tg{tg_idx} = detail_rows;
             end
+            continue;
         end
 
-        % 按需加载当前场景的 5 个校准回波（避免断点全跳过时读取磁盘）
-        if scene_echo_cache.scene ~= scene_name
-            [scene_echo_cache.sample_ids, scene_echo_cache.signals] = ...
-                load_scene_calibration_signals(scene_manifest, S60, cfg.raw_decimation_step);
-            scene_echo_cache.scene = scene_name;
+        est_up_bytes = n_cal * prod(grid.upsampled_size) * elem_bytes;
+        if preload_signals && (base_bytes + est_up_bytes <= cache_budget_bytes)
+            fprintf("  [R%dA%d] 内存缓存模式：预构建 %d 个上采样回波（约 %.2f GB）...\n", ...
+                rq, aq, n_cal, est_up_bytes / (1024 ^ 3));
+            up_signals = cell(n_cal, 1);
+            for k = 1:n_cal
+                up_signals{k} = two_dim_upsample_fft(cal_signals{k}, rq, aq);
+            end
+            for tg_idx = group_tg_idx(:).'
+                detail_rows = run_tg_with_up_signals( ...
+                    cfg, S60, grid, threshold_groups(tg_idx, :), variant_specs, ...
+                    cal_manifest, up_signals, gt_cache, fast_ctx, use_fast);
+                save_tg_checkpoint(cp_dir, threshold_groups(tg_idx, :), variant_specs, ...
+                    cal_manifest, S60, cfg, detail_rows);
+                detail_by_tg{tg_idx} = detail_rows;
+            end
+            clear up_signals
+        else
+            fprintf("  [R%dA%d] 流式低内存模式：预计整组上采样 %.2f GB 超出剩余预算，逐样本复用（%d 组）...\n", ...
+                rq, aq, est_up_bytes / (1024 ^ 3), numel(group_tg_idx));
+            n_g = numel(group_tg_idx);
+            tg_parts = cell(n_g, n_cal);
+            for k = 1:n_cal
+                sig_up = two_dim_upsample_fft(cal_signals{k}, rq, aq);
+                sample_row = cal_manifest(k, :);
+                for m = 1:n_g
+                    tg = threshold_groups(group_tg_idx(m), :);
+                    tg_parts{m, k} = evaluate_one_sample_for_tg( ...
+                        cfg, S60, grid, tg, variant_specs, sample_row, ...
+                        sig_up, gt_cache, [], fast_ctx, use_fast);
+                end
+                clear sig_up
+            end
+            for m = 1:n_g
+                tg_idx = group_tg_idx(m);
+                tg = threshold_groups(tg_idx, :);
+                detail_rows = vertcat(tg_parts{m, :});
+                save_tg_checkpoint(cp_dir, tg, variant_specs, cal_manifest, S60, cfg, detail_rows);
+                detail_by_tg{tg_idx} = detail_rows;
+            end
+            clear tg_parts
         end
-
-        fprintf("  [%02d/%02d] %s | 场景 %s (%d 样本)\n", ...
-            tg_idx, n_tg, tg.ThresholdKey, scene_name, height(scene_manifest));
-
-        detail_rows = evaluate_scene_threshold_group( ...
-            cfg, S60, grid, tg, variant_specs, scene_manifest, ...
-            scene_echo_cache.signals, gt_cache, sft_carrier, fast_ctx, use_fast, workers);
-
-        state = struct( ...
-            "parameters", expected_params, ...
-            "detail_rows", detail_rows, ...
-            "completed", true);
-        zc1bit_atomic_save(cp_path, struct("state", state));
-        all_detail_parts{part_ptr} = detail_rows;
     end
 end
 
-% 5. 组装明细表并生成汇总、规则排名与配对统计
-detail_table = vertcat(all_detail_parts{:});
+% 4. 组装全量明细并一次性写入最终报表与汇总 MAT
+detail_table = vertcat(detail_by_tg{:});
 validate_detail_table(detail_table);
 
 summary_table = build_screen_summary(detail_table, threshold_groups, variant_specs);
@@ -130,7 +181,7 @@ zc1bit_atomic_save(fullfile(p.screen, "screen_results.mat"), struct( ...
     "detail_table", detail_table, ...
     "summary_table", summary_table, ...
     "ranking_table", ranking_table));
-write_screen_metadata(p.screen, cfg, cal_manifest, threshold_groups, variant_specs, ranking_table);
+write_screen_metadata(p.screen, cfg, cal_manifest, threshold_groups, variant_specs, ranking_table, cache_gb);
 
 fprintf("阶段一规则快筛完成，输出目录：%s\n", p.screen);
 out = struct( ...
@@ -140,42 +191,66 @@ out = struct( ...
     "output_dir", p.screen);
 end
 
-function gt_cache = load_or_build_cal_gt_cache(cfg, S60, cal_manifest, p)
-cache_path = fullfile(p.checkpoints, "screen", "gt_cal_cache.mat");
-expected_params = struct( ...
-    "manifest", zc1bit_parameters(cal_manifest), ...
-    "S60", zc1bit_parameters(S60), ...
-    "enl_dataset_names", cfg.enl_dataset_names, ...
-    "enl_window_size", cfg.enl_window_size, ...
-    "enl_stride", cfg.enl_stride, ...
-    "entropy_num_bins", cfg.entropy_num_bins, ...
-    "raw_decimation_step", cfg.raw_decimation_step);
-
-if isfile(cache_path)
-    state = zc1bit_load_state(cache_path, struct());
-    if isfield(state, "completed") && isequal(state.completed, true)
-        zc1bit_check_parameters(state.parameters, expected_params, "校准集 GT 缓存");
-        gt_cache = state.gt_cache;
-        return;
+function [cache_gb, preload_signals] = resolve_runtime_options(cfg)
+cache_gb = 5;
+preload_signals = true;
+if isfield(cfg, "runtime") && isstruct(cfg.runtime)
+    if isfield(cfg.runtime, "cache_gb") && ~isempty(cfg.runtime.cache_gb)
+        cache_gb = double(cfg.runtime.cache_gb);
+    end
+    if isfield(cfg.runtime, "preload_signals") && ~isempty(cfg.runtime.preload_signals)
+        preload_signals = logical(cfg.runtime.preload_signals);
     end
 end
+if ~isscalar(cache_gb) || ~isfinite(cache_gb) || cache_gb <= 0
+    error("zc1bit:InvalidCacheBudget", "cfg.runtime.cache_gb 必须为正有限标量。");
+end
+end
 
+function expected_params = build_tg_expected_params(tg, variant_specs, cal_manifest, S60, cfg)
+expected_params = struct( ...
+    "threshold", zc1bit_parameters(tg), ...
+    "variants", zc1bit_parameters(variant_specs), ...
+    "manifest", zc1bit_parameters(cal_manifest), ...
+    "S60", zc1bit_parameters(S60), ...
+    "enl_window_size", cfg.enl_window_size, ...
+    "enl_stride", cfg.enl_stride, ...
+    "entropy_num_bins", cfg.entropy_num_bins);
+end
+
+function save_tg_checkpoint(cp_dir, tg, variant_specs, cal_manifest, S60, cfg, detail_rows)
+cp_path = fullfile(cp_dir, tg.ThresholdKey + ".mat");
+expected_params = build_tg_expected_params(tg, variant_specs, cal_manifest, S60, cfg);
+state = struct( ...
+    "parameters", expected_params, ...
+    "detail_rows", detail_rows, ...
+    "completed", true);
+zc1bit_atomic_save(cp_path, struct("state", state));
+fprintf("  [完成] %s（已原子落盘 %d 条校准明细）\n", tg.ThresholdKey, height(detail_rows));
+end
+
+function gt_cache = try_load_cal_gt_cache(cfg, S60, cal_manifest, cache_path)
+gt_cache = [];
+if ~isfile(cache_path)
+    return;
+end
+state = zc1bit_load_state(cache_path, struct());
+if ~isfield(state, "completed") || ~isequal(state.completed, true)
+    return;
+end
+expected_params = build_gt_expected_params(cfg, S60, cal_manifest);
+zc1bit_check_parameters(state.parameters, expected_params, "校准集 GT 缓存");
+gt_cache = state.gt_cache;
+end
+
+function gt_cache = build_and_save_cal_gt_cache(cfg, S60, cal_manifest, cal_signals, cache_path)
 n_cal = height(cal_manifest);
 img_gts = cell(n_cal, 1);
 gt_entropy = zeros(n_cal, 1);
-scenes = unique(cal_manifest.Dataset, "stable");
-
-for s_idx = 1:numel(scenes)
-    scene_mask = (cal_manifest.Dataset == scenes(s_idx));
-    scene_rows = cal_manifest(scene_mask, :);
-    [~, signals] = load_scene_calibration_signals(scene_rows, S60, cfg.raw_decimation_step);
-    indices = find(scene_mask);
-    for k = 1:numel(indices)
-        idx = indices(k);
-        img_gt = generate_gt_image(signals{k}, S60);
-        img_gts{idx} = img_gt;
-        gt_entropy(idx) = compute_entropy(img_gt, cfg.entropy_num_bins);
-    end
+for idx = 1:n_cal
+    img_gt = generate_gt_image(cal_signals{idx}, S60);
+    img_gts{idx} = img_gt;
+    gt_entropy(idx) = compute_entropy(img_gt, cfg.entropy_num_bins);
 end
 
 [is_enl, enl_top, enl_left, ~, roi_manifest] = build_enl_regions(img_gts, cal_manifest, cfg);
@@ -193,165 +268,150 @@ gt_cache = struct( ...
     "enl_left", enl_left, ...
     "gt_enl", gt_enl, ...
     "roi_manifest", roi_manifest);
+expected_params = build_gt_expected_params(cfg, S60, cal_manifest);
 zc1bit_atomic_save(cache_path, struct("state", struct( ...
     "parameters", expected_params, ...
     "gt_cache", gt_cache, ...
     "completed", true)));
 end
 
-function [sample_ids, signals] = load_scene_calibration_signals(scene_manifest, S60, decim_step)
-n = height(scene_manifest);
-sample_ids = scene_manifest.SampleID;
-signals = cell(n, 1);
-loaded = load(scene_manifest.FilePath(1), char(scene_manifest.EchoVariable(1)));
-raw = loaded.(char(scene_manifest.EchoVariable(1)));
+function expected_params = build_gt_expected_params(cfg, S60, cal_manifest)
+expected_params = struct( ...
+    "manifest", zc1bit_parameters(cal_manifest), ...
+    "S60", zc1bit_parameters(S60), ...
+    "enl_dataset_names", cfg.enl_dataset_names, ...
+    "enl_window_size", cfg.enl_window_size, ...
+    "enl_stride", cfg.enl_stride, ...
+    "entropy_num_bins", cfg.entropy_num_bins, ...
+    "raw_decimation_step", cfg.raw_decimation_step);
+end
+
+function cal_signals = preload_all_calibration_signals(cal_manifest, S60, decim_step)
+% 对每个唯一回波 MAT 文件仅顺序读取一次，提取全部校准信号常驻内存。
+n_cal = height(cal_manifest);
+cal_signals = cell(n_cal, 1);
+[unique_files, ~, file_group] = unique(cal_manifest.FilePath, "stable");
 row_idx = 1 : decim_step : (1 + decim_step * (S60.nrn - 1));
-for k = 1:n
-    c_start = scene_manifest.CStart(k);
-    sig60 = raw(row_idx, c_start : c_start + S60.nan - 1);
-    if ~isequal(size(sig60), [S60.nrn, S60.nan])
-        error("zc1bit:SignalSize", "回波块尺寸 [%d %d] 与 S60 [%d %d] 不一致。", ...
-            size(sig60, 1), size(sig60, 2), S60.nrn, S60.nan);
+
+fprintf("顺序加载 %d 个回波文件中的 %d 个校准样本到内存...\n", numel(unique_files), n_cal);
+for f_idx = 1:numel(unique_files)
+    indices = find(file_group == f_idx);
+    var_name = char(cal_manifest.EchoVariable(indices(1)));
+    loaded = load(unique_files(f_idx), var_name);
+    raw = loaded.(var_name);
+    for idx = indices(:).'
+        c_start = cal_manifest.CStart(idx);
+        sig60 = raw(row_idx, c_start : c_start + S60.nan - 1);
+        if ~isequal(size(sig60), [S60.nrn, S60.nan])
+            error("zc1bit:SignalSize", "回波块尺寸 [%d %d] 与 S60 [%d %d] 不一致。", ...
+                size(sig60, 1), size(sig60, 2), S60.nrn, S60.nan);
+        end
+        cal_signals{idx} = sig60;
     end
-    signals{k} = sig60;
+    clear raw loaded
 end
 end
 
-function rows = evaluate_scene_threshold_group( ...
-        cfg, S60, grid, tg, variant_specs, scene_manifest, ...
-        signals, gt_cache, sft_carrier, fast_ctx, use_fast, workers)
+function detail_rows = run_tg_with_up_signals( ...
+        cfg, S60, grid, tg, variant_specs, cal_manifest, up_signals, gt_cache, fast_ctx, use_fast)
+n_cal = height(cal_manifest);
+sft_carrier = [];
+if ismember(tg.ThresholdType, ["RSFT", "ASFT", "2D-SFT"])
+    cparams = struct("fr_over_Br", tg.FrOverBr, "fa_over_Ba", tg.FaOverBa, "phi0", tg.Phi0);
+    sft_carrier = build_sft_carrier(grid, cparams, S60);
+end
 
-n_samples = height(scene_manifest);
+parts = cell(n_cal, 1);
+for k = 1:n_cal
+    parts{k} = evaluate_one_sample_for_tg( ...
+        cfg, S60, grid, tg, variant_specs, cal_manifest(k, :), ...
+        up_signals{k}, gt_cache, sft_carrier, fast_ctx, use_fast);
+end
+detail_rows = vertcat(parts{:});
+end
+
+function rows = evaluate_one_sample_for_tg( ...
+        cfg, S60, grid, tg, variant_specs, sample_row, ...
+        signal_up, gt_cache, sft_carrier, fast_ctx, use_fast)
+
 n_var = height(variant_specs);
-n_total = n_samples * n_var;
+sid = sample_row.SampleID;
+gt_idx = find(gt_cache.SampleID == sid, 1);
+img_gt = gt_cache.img_gts{gt_idx};
+is_enl = gt_cache.is_enl(gt_idx);
+top_r = gt_cache.enl_top(gt_idx);
+left_c = gt_cache.enl_left(gt_idx);
+gt_enl_val = gt_cache.gt_enl(gt_idx);
 
-psnr_vec = zeros(n_total, 1);
-ssim_vec = zeros(n_total, 1);
-ent_vec = zeros(n_total, 1);
-enl_vec = nan(n_total, 1);
-gt_enl_vec = nan(n_total, 1);
-abs_enl_diff_vec = nan(n_total, 1);
-zr_vec = zeros(n_total, 1);
-mbr_vec = zeros(n_total, 1);
-mbi_vec = zeros(n_total, 1);
-abm_vec = zeros(n_total, 1);
+ttype = tg.ThresholdType;
+rq = tg.Range_q;
+aq = tg.Azimuth_q;
+axis_mode = tg.Axis;
+ent_bins = cfg.entropy_num_bins;
+enl_win = cfg.enl_window_size;
 
-sample_id_vec = zeros(n_total, 1);
-local_idx_vec = zeros(n_total, 1);
-dataset_vec = strings(n_total, 1);
-rule_vec = strings(n_total, 1);
-mode_vec = strings(n_total, 1);
-dc_vec = false(n_total, 1);
-vkey_vec = strings(n_total, 1);
-tkey_vec = strings(n_total, 1);
+t_spec = struct("ThresholdType", ttype);
+t_opts = struct("nyquist_margin", cfg.nyquist_margin, "carrier", sft_carrier);
+if ttype == "RT"
+    t_spec.As = tg.As;
+    rt_seed = stable_rt_seed(cfg.seed, tg.ThresholdKey, sid);
+    t_opts.rand_stream = RandStream("mt19937ar", "Seed", rt_seed);
+elseif ismember(ttype, ["RSFT", "ASFT", "2D-SFT"])
+    t_spec.STR_dB = tg.STR_dB;
+    t_spec.fr_over_Br = tg.FrOverBr;
+    t_spec.fa_over_Ba = tg.FaOverBa;
+    t_spec.phi0 = tg.Phi0;
+end
+
+U = build_threshold(signal_up, grid, t_spec, S60, t_opts);
+channel_1bit = quantize_1bit_with_u(signal_up, U);
+clear U
+
+psnr_vec = zeros(n_var, 1);
+ssim_vec = zeros(n_var, 1);
+ent_vec = zeros(n_var, 1);
+enl_vec = nan(n_var, 1);
+abs_enl_diff_vec = nan(n_var, 1);
+zr_vec = zeros(n_var, 1);
+mbr_vec = zeros(n_var, 1);
+mbi_vec = zeros(n_var, 1);
+abm_vec = zeros(n_var, 1);
 
 v_rules = variant_specs.RuleKey;
 v_modes = variant_specs.DecisionMode;
 v_dcs = variant_specs.RemoveDC;
 v_keys = variant_specs.VariantKey;
-axis_mode = tg.Axis;
-rq = tg.Range_q;
-aq = tg.Azimuth_q;
-ttype = tg.ThresholdType;
-ent_bins = cfg.entropy_num_bins;
-enl_win = cfg.enl_window_size;
 
-for k = 1:n_samples
-    sid = scene_manifest.SampleID(k);
-    gt_idx = find(gt_cache.SampleID == sid, 1);
-    img_gt = gt_cache.img_gts{gt_idx};
-    is_enl = gt_cache.is_enl(gt_idx);
-    top_r = gt_cache.enl_top(gt_idx);
-    left_c = gt_cache.enl_left(gt_idx);
-    gt_enl_val = gt_cache.gt_enl(gt_idx);
-
-    signal_up = two_dim_upsample_fft(signals{k}, rq, aq);
-
-    t_spec = struct("ThresholdType", ttype);
-    t_opts = struct("nyquist_margin", cfg.nyquist_margin, "carrier", sft_carrier);
-    if ttype == "RT"
-        t_spec.As = tg.As;
-        rt_seed = stable_rt_seed(cfg.seed, tg.ThresholdKey, sid);
-        t_opts.rand_stream = RandStream("mt19937ar", "Seed", rt_seed);
-    elseif ismember(ttype, ["RSFT", "ASFT", "2D-SFT"])
-        t_spec.STR_dB = tg.STR_dB;
-        t_spec.fr_over_Br = tg.FrOverBr;
-        t_spec.fa_over_Ba = tg.FaOverBa;
-        t_spec.phi0 = tg.Phi0;
-    end
-
-    U = build_threshold(signal_up, grid, t_spec, S60, t_opts);
-    channel_1bit = quantize_1bit_with_u(signal_up, U);
-    clear signal_up U
-
-    p_arr = zeros(n_var, 1);
-    s_arr = zeros(n_var, 1);
-    e_arr = zeros(n_var, 1);
-    enl_arr = nan(n_var, 1);
-    zr_arr = zeros(n_var, 1);
-    mbr_arr = zeros(n_var, 1);
-    mbi_arr = zeros(n_var, 1);
-    abm_arr = zeros(n_var, 1);
-
-    if workers > 0
-        parfor (v_idx = 1:n_var, workers)
-            [p_arr(v_idx), s_arr(v_idx), e_arr(v_idx), enl_arr(v_idx), ...
-                zr_arr(v_idx), mbr_arr(v_idx), mbi_arr(v_idx), abm_arr(v_idx)] = ...
-                evaluate_one_variant(channel_1bit, img_gt, v_rules(v_idx), axis_mode, ...
-                v_modes(v_idx), v_dcs(v_idx), rq, aq, S60, fast_ctx, use_fast, ...
-                ent_bins, is_enl, top_r, left_c, enl_win);
-        end
-    else
-        for v_idx = 1:n_var
-            [p_arr(v_idx), s_arr(v_idx), e_arr(v_idx), enl_arr(v_idx), ...
-                zr_arr(v_idx), mbr_arr(v_idx), mbi_arr(v_idx), abm_arr(v_idx)] = ...
-                evaluate_one_variant(channel_1bit, img_gt, v_rules(v_idx), axis_mode, ...
-                v_modes(v_idx), v_dcs(v_idx), rq, aq, S60, fast_ctx, use_fast, ...
-                ent_bins, is_enl, top_r, left_c, enl_win);
-        end
-    end
-
-    dest = (k - 1) * n_var + (1:n_var);
-    psnr_vec(dest) = p_arr;
-    ssim_vec(dest) = s_arr;
-    ent_vec(dest) = e_arr;
-    enl_vec(dest) = enl_arr;
-    gt_enl_vec(dest) = repmat(gt_enl_val, n_var, 1);
-    if is_enl
-        abs_enl_diff_vec(dest) = abs(enl_arr - gt_enl_val);
-    end
-    zr_vec(dest) = zr_arr;
-    mbr_vec(dest) = mbr_arr;
-    mbi_vec(dest) = mbi_arr;
-    abm_vec(dest) = abm_arr;
-
-    sample_id_vec(dest) = repmat(sid, n_var, 1);
-    local_idx_vec(dest) = repmat(scene_manifest.LocalSampleIdx(k), n_var, 1);
-    dataset_vec(dest) = repmat(scene_manifest.Dataset(k), n_var, 1);
-    rule_vec(dest) = v_rules;
-    mode_vec(dest) = v_modes;
-    dc_vec(dest) = v_dcs;
-    vkey_vec(dest) = v_keys;
-    tkey_vec(dest) = tg.ThresholdKey + "__" + v_keys;
+for v_idx = 1:n_var
+    [psnr_vec(v_idx), ssim_vec(v_idx), ent_vec(v_idx), enl_vec(v_idx), ...
+        zr_vec(v_idx), mbr_vec(v_idx), mbi_vec(v_idx), abm_vec(v_idx)] = ...
+        evaluate_one_variant(channel_1bit, img_gt, v_rules(v_idx), axis_mode, ...
+        v_modes(v_idx), v_dcs(v_idx), rq, aq, S60, fast_ctx, use_fast, ...
+        ent_bins, is_enl, top_r, left_c, enl_win);
+end
+if is_enl
+    abs_enl_diff_vec = abs(enl_vec - gt_enl_val);
 end
 
 rows = table( ...
-    sample_id_vec, local_idx_vec, dataset_vec, ...
-    repmat(tg.ThresholdKey, n_total, 1), ...
-    repmat(tg.Branch, n_total, 1), ...
-    repmat(tg.Axis, n_total, 1), ...
-    repmat(tg.GroupName, n_total, 1), ...
-    repmat(tg.Q, n_total, 1), ...
-    repmat(tg.Range_q, n_total, 1), ...
-    repmat(tg.Azimuth_q, n_total, 1), ...
-    repmat(tg.ThresholdType, n_total, 1), ...
-    repmat(tg.ParamTag, n_total, 1), ...
-    repmat(tg.As, n_total, 1), ...
-    repmat(tg.STR_dB, n_total, 1), ...
-    repmat(tg.FrOverBr, n_total, 1), ...
-    repmat(tg.FaOverBa, n_total, 1), ...
-    rule_vec, mode_vec, dc_vec, vkey_vec, tkey_vec, ...
-    psnr_vec, ssim_vec, ent_vec, enl_vec, gt_enl_vec, abs_enl_diff_vec, ...
+    repmat(sid, n_var, 1), ...
+    repmat(sample_row.LocalSampleIdx, n_var, 1), ...
+    repmat(sample_row.Dataset, n_var, 1), ...
+    repmat(tg.ThresholdKey, n_var, 1), ...
+    repmat(tg.Branch, n_var, 1), ...
+    repmat(axis_mode, n_var, 1), ...
+    repmat(tg.GroupName, n_var, 1), ...
+    repmat(tg.Q, n_var, 1), ...
+    repmat(rq, n_var, 1), ...
+    repmat(aq, n_var, 1), ...
+    repmat(ttype, n_var, 1), ...
+    repmat(tg.ParamTag, n_var, 1), ...
+    repmat(tg.As, n_var, 1), ...
+    repmat(tg.STR_dB, n_var, 1), ...
+    repmat(tg.FrOverBr, n_var, 1), ...
+    repmat(tg.FaOverBa, n_var, 1), ...
+    v_rules, v_modes, v_dcs, v_keys, tg.ThresholdKey + "__" + v_keys, ...
+    psnr_vec, ssim_vec, ent_vec, enl_vec, repmat(gt_enl_val, n_var, 1), abs_enl_diff_vec, ...
     zr_vec, mbr_vec, mbi_vec, abm_vec, ...
     'VariableNames', { ...
     'SampleID', 'LocalSampleIdx', 'Dataset', ...
@@ -567,27 +627,6 @@ if any(~isfinite(detail_table.SSIM)) || any(~isfinite(detail_table.Entropy))
 end
 end
 
-function workers = resolve_parallel_workers(requested_workers)
-workers = 0;
-if requested_workers <= 0
-    return;
-end
-pool = gcp("nocreate");
-if isempty(pool)
-    try
-        max_cores = max(1, feature("numcores"));
-        pool = parpool("threads", min(requested_workers, max_cores));
-        workers = pool.NumWorkers;
-    catch err
-        warning("zc1bit:ParallelFallback", ...
-            "并行池启动失败，已自动降级为串行执行 (workers=0)：%s", err.message);
-        workers = 0;
-    end
-else
-    workers = min(requested_workers, pool.NumWorkers);
-end
-end
-
 function seed = stable_rt_seed(base_seed, threshold_key, sample_id)
 chars = double(char(threshold_key));
 h = 0;
@@ -597,18 +636,15 @@ end
 seed = mod(double(base_seed) + h * 1000 + double(sample_id), 2^31 - 1);
 end
 
-function key = make_scene_key(scene_name)
-key = lower(regexprep(string(scene_name), "[^a-zA-Z0-9]+", "_"));
-key = regexprep(key, "^_+|_+$", "");
-end
-
-function write_screen_metadata(screen_dir, cfg, cal_manifest, threshold_groups, variant_specs, ranking_table)
+function write_screen_metadata(screen_dir, cfg, cal_manifest, threshold_groups, variant_specs, ranking_table, cache_gb)
 fid = fopen(fullfile(screen_dir, "screen_metadata.txt"), "w", "n", "UTF-8");
 if fid < 0
     error("zc1bit:MetadataWrite", "无法写入 screen_metadata.txt。");
 end
 cleanup = onCleanup(@() fclose(fid));
 fprintf(fid, "Experiment=SAR-ZC1Bit Stage 1 Screen\n");
+fprintf(fid, "ExecutionMode=single_core\n");
+fprintf(fid, "CacheBudgetGB=%.6g\n", cache_gb);
 fprintf(fid, "Seed=%d\n", cfg.seed);
 fprintf(fid, "CalibrationSampleCount=%d\n", height(cal_manifest));
 fprintf(fid, "ThresholdConfigCount=%d\n", height(threshold_groups));

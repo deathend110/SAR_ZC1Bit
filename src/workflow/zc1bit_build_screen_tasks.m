@@ -1,9 +1,10 @@
 function [threshold_groups, variant_specs] = zc1bit_build_screen_tasks(cfg, S60)
 %ZC1BIT_BUILD_SCREEN_TASKS 构建阶段一规则快筛的阈值配置表与规则/开关变体表。
-% 覆盖：
-%   - range_branch（dim 1）：R1A1, R4A1, R9A1 × {ZT, RT, RSFT, 2D-SFT}
-%   - azimuth_branch（dim 2）：R1A1, R1A4, R1A9 × {ZT, RT, ASFT, 2D-SFT}
+% 默认单向主线覆盖：
+%   - range_branch（dim 1）：R1A1, R4A1, R9A1 × {ZT, RT, RSFT}
+%   - azimuth_branch（dim 2）：R1A1, R1A4, R1A9 × {ZT, RT, ASFT}
 %   - 规则变体：B0 + R1..R9 + L1 × {parallel, serial} × {raw, dc_removed}
+% 底层保留 2D-SFT 分支，供后续可选扩展按需启用。
 
 sc = cfg.screen;
 rows_tg = cell(0, 14);

@@ -7,8 +7,8 @@
 - 根目录：交互入口（`start_zc1bit.m`）、集中配置（`zc1bit_config.m` / `zc1bit_smoke_config.m`）、路径守卫（`setup_zc1bit_paths.m`）及阶段入口（`run_zc1bit_*.m`）。
 - `src/`：独立维护的 MATLAB 源码目录，禁止跨仓库 `addpath` 强耦合：
   - `src/compat/`：`gaussian.m`、`normalize_image.m`
-  - `src/sampling/`：距离、方位与双向 BARU 的 FFT 上采样、频谱裁剪及网格解析
-  - `src/threshold/`：ZT、SplitRT、RSFT、ASFT、2D-SFT 五类阈值与 $\hat\sigma$ 估计、Nyquist 校验
+  - `src/sampling/`：距离与方位 FFT 上采样、频谱裁剪及网格解析（底层保留双向 BARU 接口作后续可选扩展）
+  - `src/threshold/`：ZT、SplitRT、RSFT、ASFT 四类主阈值（保留 2D-SFT 接口作可选扩展）与 $\hat\sigma$ 估计、Nyquist 校验
   - `src/quantization/`：非对称 $\operatorname{sgn}_+(0)=+1$ 1-bit 量化与伪 1.5-bit 规则族（`B0`、`R1`–`R9`、`L1`）
   - `src/sarproc/`：`Range_Compress`、`RCMC`、`SAR_Imaging`、标准路径与频域直裁快路径
   - `src/metrics/`：PSNR、SSIM、固定 64×64 GT ROI ENL、256-bin Entropy、频谱泄漏比与配对 Wilcoxon 检验
@@ -25,7 +25,7 @@
 
 1. 复制 `inputs/local_paths.example.m` 为 `inputs/local_paths.m`，确认 `data_root`（如 `G:\MATLAB-G\SAR Full PSF`）与 `parameter_file_60` 指向正确路径。
 2. 在 MATLAB 中打开 `start_zc1bit.m`，保持 `cfg.stage = "preflight"` 点击运行，核对预检输出的校准/测试样本数与阶段一任务规模。
-3. 确认就绪后将 `cfg.stage` 改为 `"screen"` 运行阶段一规则快筛；中断后保持实际计算参数不变，再次运行即可按“阈值配置 × 场景”断点续算。
+3. 确认就绪后将 `cfg.stage` 改为 `"screen"` 运行阶段一规则快筛（默认单核运行、`4–6 GB` 内存缓存单轮读盘，按 `ThresholdKey` 扁平断点续算）。
 4. 运行轻量单元测试：
 
 ```matlab

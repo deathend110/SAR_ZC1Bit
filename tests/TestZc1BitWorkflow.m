@@ -68,12 +68,13 @@ classdef TestZc1BitWorkflow < matlab.unittest.TestCase
             t.verifyEqual(m.LocalSampleIdx(m.Split == "calibration"), [1; 3; 5; 7; 9]);
             t.verifyEqual(m.LocalSampleIdx(m.Split == "test"), [2; 4; 6; 8; 10]);
 
-            % 改变 data_root、results_root、workers 等非计算参数，检查点仍应匹配通过
+            % 改变 data_root、results_root、runtime 内存参数等非计算参数，检查点仍应匹配通过
             moved_raw = fullfile(folder, "raw_moved");
             copyfile(fullfile(folder, "raw"), moved_raw);
             cfg2 = cfg;
             cfg2.data_root = moved_raw;
-            cfg2.screen.workers = 4;
+            cfg2.runtime.cache_gb = 2;
+            cfg2.runtime.preload_signals = false;
             cfg2.screen.use_fast_path = false;
             out2 = run_zc1bit_workflow(cfg2);
             t.verifyEqual(out2.record.manifest.CStart, m.CStart);
@@ -129,21 +130,33 @@ classdef TestZc1BitWorkflow < matlab.unittest.TestCase
             [tgroups, ~] = zc1bit_build_screen_tasks(cfg, S60);
             t.verifyEqual(numel(unique(tgroups.ThresholdKey)), height(tgroups));
 
-            % 用全 NaN 覆盖原始回波内容并修改 workers 后重跑 screen，必须 100% 命中断点零重算
+            % 验证扁平断点目录：无子目录，且包含 gt_cal_cache.mat 与全部 ThresholdKey .mat
+            cp_screen_dir = fullfile(out.paths.checkpoints, "screen");
+            cp_entries = dir(cp_screen_dir);
+            cp_names = string({cp_entries.name});
+            cp_is_subdir = [cp_entries.isdir] & ~ismember(cp_names, [".", ".."]);
+            t.verifyFalse(any(cp_is_subdir));
+            expected_cp_files = ["gt_cal_cache.mat"; tgroups.ThresholdKey + ".mat"];
+            t.verifyTrue(all(ismember(expected_cp_files, cp_names)));
+
+            % 用全 NaN 覆盖原始回波内容并修改 runtime 内存参数后重跑 screen，必须 100% 命中断点零重算
             raw_nan = complex(nan(S60.nrn, 24), nan(S60.nrn, 24));
             save(fullfile(scene_dir, "rstart 1.mat"), "raw_nan", "-v7.3");
-            cfg.screen.workers = 2;
+            cfg.runtime.cache_gb = 2;
+            cfg.runtime.preload_signals = false;
             out_resumed = run_zc1bit_screen(cfg);
             t.verifyEqual(out_resumed.summary_table.PSNR_Mean, out.screen.summary_table.PSNR_Mean);
 
-            % 验证正式配置在本地 FS60_params.mat 下可无冲突构建全部阶段一任务与 Nyquist 检查
+            % 验证正式配置在本地 FS60_params.mat 下可无冲突构建全部 36 个单向四阈值阶段一任务
             real_cfg = zc1bit_config();
             if isfile(real_cfg.parameter_file_60)
                 S60_real = load(real_cfg.parameter_file_60);
                 [real_tg, real_vs] = zc1bit_build_screen_tasks(real_cfg, S60_real);
                 t.verifyEqual(numel(unique(real_tg.ThresholdKey)), height(real_tg));
                 t.verifyEqual(numel(unique(real_vs.VariantKey)), height(real_vs));
-                t.verifyGreaterThan(height(real_tg), 0);
+                t.verifyEqual(height(real_tg), 36);
+                t.verifyFalse(any(real_tg.ThresholdType == "2D-SFT"));
+                t.verifyTrue(all(real_tg.Range_q == 1 | real_tg.Azimuth_q == 1));
                 t.verifyGreaterThan(height(real_vs), 0);
             end
 
@@ -151,6 +164,51 @@ classdef TestZc1BitWorkflow < matlab.unittest.TestCase
             t.verifyError(@() run_zc1bit_search(cfg), "zc1bit:StageNotImplemented");
             t.verifyError(@() run_zc1bit_confirm(cfg), "zc1bit:StageNotImplemented");
             t.verifyError(@() run_zc1bit_evaluate(cfg), "zc1bit:StageNotImplemented");
+        end
+
+        function cacheModeMatchesStreamingFallback(t)
+            folder = string(tempname);
+            mkdir(folder);
+            cleanup = onCleanup(@() TestZc1BitWorkflow.removeFixture(folder));
+
+            S60 = smallImagingParameters();
+            param_file = fullfile(folder, "S60_smoke.mat");
+            save(param_file, "-struct", "S60");
+
+            raw_root = fullfile(folder, "raw");
+            scene_dir = fullfile(raw_root, "SmokeScene");
+            mkdir(scene_dir);
+            rng(33);
+            raw = complex(randn(S60.nrn, 24), randn(S60.nrn, 24));
+            save(fullfile(scene_dir, "rstart 1.mat"), "raw", "-v7.3");
+
+            cfg_cached = zc1bit_smoke_config(raw_root, param_file);
+            cfg_cached.results_root = fullfile(folder, "results_cached");
+            cfg_cached.stage = "screen";
+            cfg_cached.runtime.cache_gb = 1;
+            cfg_cached.runtime.preload_signals = true;
+            out_cached = run_zc1bit_workflow(cfg_cached);
+
+            cfg_stream = zc1bit_smoke_config(raw_root, param_file);
+            cfg_stream.results_root = fullfile(folder, "results_stream");
+            cfg_stream.stage = "screen";
+            cfg_stream.runtime.cache_gb = 1e-9;
+            cfg_stream.runtime.preload_signals = false;
+            out_stream = run_zc1bit_workflow(cfg_stream);
+
+            s1 = out_cached.screen.summary_table;
+            s2 = out_stream.screen.summary_table;
+            t.verifyEqual(s1.PSNR_Mean, s2.PSNR_Mean);
+            t.verifyEqual(s1.SSIM_Mean, s2.SSIM_Mean);
+            t.verifyEqual(s1.ZeroRatio_Mean, s2.ZeroRatio_Mean);
+            t.verifyEqual(s1.ENL_Mean, s2.ENL_Mean);
+
+            % 验证 zc1bit_atomic_save 默认 -v7 往返读写一致性
+            v7_file = fullfile(folder, "atomic_v7_roundtrip.mat");
+            zc1bit_atomic_save(v7_file, struct("summary_table", s1, "tag", "v7_ok"));
+            loaded = load(v7_file);
+            t.verifyEqual(loaded.summary_table, s1);
+            t.verifyEqual(loaded.tag, "v7_ok");
         end
     end
 

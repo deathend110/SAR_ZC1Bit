@@ -12,8 +12,9 @@ cfg = zc1bit_config();
 % screen   ：执行阶段一过零置零规则快筛（仅使用 35 个校准样本，支持断点续算）。
 cfg.stage = "preflight";
 
-% 阶段一并行线程数（0 表示串行；正整数尝试启用 thread parpool，失败时自动退化串行）。
-cfg.screen.workers = 0;
+% 单核运行（不使用并行池），通过 4–6 GB 内存缓存减少机械盘读盘与同倍率上采样 FFT 次数。
+cfg.runtime.cache_gb = 5;
+cfg.runtime.preload_signals = true;
 cfg.screen.use_fast_path = true;
 
 % 如需缩小/调整阶段一快筛范围，可取消以下注释按需定制：

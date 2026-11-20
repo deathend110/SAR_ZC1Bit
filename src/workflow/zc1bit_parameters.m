@@ -1,6 +1,6 @@
 function out = zc1bit_parameters(value)
 %ZC1BIT_PARAMETERS 仅提取实际计算参数用于断点恢复核对。
-% 严格排除路径、版本号、时间戳、缓存上限与并行 worker 数等非计算参数。
+% 严格排除路径、版本号、时间戳、use_fast_path 以及 runtime（cache_gb, preload_signals）等运行选项。
 
 table_cols = [ ...
     "SampleID", "DatasetIdx", "LocalSampleIdx", "Dataset", "File", "CStart", "Split", ...

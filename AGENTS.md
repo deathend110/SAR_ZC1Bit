@@ -16,6 +16,6 @@
    - string cell 比较前先转 `string(...)`；绘图/赋值前检查 `isempty` / `any(mask)`。
    - 落盘前显式建目录，写出 CSV/MAT 前校验 `height`、变量名与非有限值。
 6. **Checkpoint 与防泄漏**：
-   - 断点恢复仅核对实际计算参数（忽略路径、时间戳、版本号、worker 数与缓存大小）。
+   - 保持单核执行（不启用 `parpool`），阶段一按 `ThresholdKey`（35 样本整体）扁平 `-v7` 原子落盘；断点恢复仅核对实际计算参数（忽略路径、时间戳、版本号、`runtime.cache_gb` 与 `preload_signals`）。
    - 阶段一快筛与阶段二寻优严禁使用 35 个测试样本；测试集仅在阶段二锁参后用于最终评价。
 7. **编码与 Git**：所有 `.m`、`.md`、`.csv` 使用 UTF-8（无 BOM）；改动后运行 `checkcode` 与 `git diff --check`。

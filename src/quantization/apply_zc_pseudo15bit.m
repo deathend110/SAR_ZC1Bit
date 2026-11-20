@@ -4,7 +4,8 @@ function [channel_out, diag] = apply_zc_pseudo15bit(channel_1bit, rule_key, opti
 %
 % 支持规则：B0, R1..R9, L1
 % options 字段：
-%   Axis         - "range" (dim 1, 默认) | "azimuth" (dim 2) | "both_union" | "both_seq_ra" | "both_seq_ar"
+%   Axis         - "range" (dim 1, 默认) | "azimuth" (dim 2)
+%                  （保留 "both_union" | "both_seq_ra" | "both_seq_ar" 供后续可选双向扩展）
 %   DecisionMode - "parallel" (默认) | "serial"
 %   RemoveDC     - false (默认) | true
 
@@ -105,48 +106,87 @@ switch axis_mode
     case "range"
         y = apply_1d_dim1(x, spec, decision_mode);
     case "azimuth"
-        y = apply_1d_dim1(x.', spec, decision_mode).';
+        y = apply_1d_dim2(x, spec, decision_mode);
     case "both_union"
         yr = apply_1d_dim1(x, spec, decision_mode);
-        ya = apply_1d_dim1(x.', spec, decision_mode).';
+        ya = apply_1d_dim2(x, spec, decision_mode);
         y = x;
         y(yr == 0 | ya == 0) = 0;
     case "both_seq_ra"
         y = apply_1d_dim1(x, spec, decision_mode);
-        y = apply_1d_dim1(y.', spec, decision_mode).';
+        y = apply_1d_dim2(y, spec, decision_mode);
     case "both_seq_ar"
-        y = apply_1d_dim1(x.', spec, decision_mode).';
+        y = apply_1d_dim2(x, spec, decision_mode);
         y = apply_1d_dim1(y, spec, decision_mode);
 end
 end
 
 function y = apply_1d_dim1(x, spec, decision_mode)
-% 沿第 1 维执行过零置零；支持列向量与二维矩阵（向量化并行列处理）。
+% 沿第 1 维执行过零置零；右端不置零规则（L1/R2/R5）并行与串行严格等价，直接走向量化快路径；
+% 其余 serial 规则先转置为连续列切片扫描，再转置回原布局。
+if decision_mode == "parallel" || (~spec.ZeroRightP2N && ~spec.ZeroRightN2P)
+    y = apply_1d_dim1_parallel(x, spec);
+else
+    y = apply_1d_dim2_serial(x.', spec).';
+end
+end
+
+function y = apply_1d_dim2(x, spec, decision_mode)
+% 沿第 2 维执行过零置零，直接按连续列访问，零转置开销。
+if decision_mode == "parallel" || (~spec.ZeroRightP2N && ~spec.ZeroRightN2P)
+    y = apply_1d_dim2_parallel(x, spec);
+else
+    y = apply_1d_dim2_serial(x, spec);
+end
+end
+
+function y = apply_1d_dim1_parallel(x, spec)
 [nr, nc] = size(x);
 y = x;
 if nr < 2 || nc == 0
     return;
 end
+p2n = (x(1:end - 1, :) == 1) & (x(2:end, :) == -1);
+n2p = (x(1:end - 1, :) == -1) & (x(2:end, :) == 1);
+mask = false(nr, nc);
+if spec.ZeroLeftP2N,  mask(1:end - 1, :) = mask(1:end - 1, :) | p2n; end
+if spec.ZeroRightP2N, mask(2:end, :)     = mask(2:end, :)     | p2n; end
+if spec.ZeroLeftN2P,  mask(1:end - 1, :) = mask(1:end - 1, :) | n2p; end
+if spec.ZeroRightN2P, mask(2:end, :)     = mask(2:end, :)     | n2p; end
+y(mask) = 0;
+end
 
-if decision_mode == "parallel"
-    p2n = (x(1:end - 1, :) == 1) & (x(2:end, :) == -1);
-    n2p = (x(1:end - 1, :) == -1) & (x(2:end, :) == 1);
-    mask = false(nr, nc);
-    if spec.ZeroLeftP2N,  mask(1:end - 1, :) = mask(1:end - 1, :) | p2n; end
-    if spec.ZeroRightP2N, mask(2:end, :)     = mask(2:end, :)     | p2n; end
-    if spec.ZeroLeftN2P,  mask(1:end - 1, :) = mask(1:end - 1, :) | n2p; end
-    if spec.ZeroRightN2P, mask(2:end, :)     = mask(2:end, :)     | n2p; end
-    y(mask) = 0;
-else
-    for k = 1:nr - 1
-        top = y(k, :);
-        bot = y(k + 1, :);
-        p2n = (top == 1) & (bot == -1);
-        n2p = (top == -1) & (bot == 1);
-        if spec.ZeroLeftP2N && any(p2n),  y(k, p2n) = 0; end
-        if spec.ZeroRightP2N && any(p2n), y(k + 1, p2n) = 0; end
-        if spec.ZeroLeftN2P && any(n2p),  y(k, n2p) = 0; end
-        if spec.ZeroRightN2P && any(n2p), y(k + 1, n2p) = 0; end
-    end
+function y = apply_1d_dim2_parallel(x, spec)
+[nr, nc] = size(x);
+y = x;
+if nc < 2 || nr == 0
+    return;
+end
+p2n = (x(:, 1:end - 1) == 1) & (x(:, 2:end) == -1);
+n2p = (x(:, 1:end - 1) == -1) & (x(:, 2:end) == 1);
+mask = false(nr, nc);
+if spec.ZeroLeftP2N,  mask(:, 1:end - 1) = mask(:, 1:end - 1) | p2n; end
+if spec.ZeroRightP2N, mask(:, 2:end)     = mask(:, 2:end)     | p2n; end
+if spec.ZeroLeftN2P,  mask(:, 1:end - 1) = mask(:, 1:end - 1) | n2p; end
+if spec.ZeroRightN2P, mask(:, 2:end)     = mask(:, 2:end)     | n2p; end
+y(mask) = 0;
+end
+
+function y = apply_1d_dim2_serial(x, spec)
+% 沿第 2 维连续列切片原地扫描，改善列主序缓存局部性。
+[nr, nc] = size(x);
+y = x;
+if nc < 2 || nr == 0
+    return;
+end
+for k = 1:nc - 1
+    left_col = y(:, k);
+    right_col = y(:, k + 1);
+    p2n = (left_col == 1) & (right_col == -1);
+    n2p = (left_col == -1) & (right_col == 1);
+    if spec.ZeroLeftP2N && any(p2n),  y(p2n, k) = 0; end
+    if spec.ZeroRightP2N && any(p2n), y(p2n, k + 1) = 0; end
+    if spec.ZeroLeftN2P && any(n2p),  y(n2p, k) = 0; end
+    if spec.ZeroRightN2P && any(n2p), y(n2p, k + 1) = 0; end
 end
 end

@@ -128,5 +128,70 @@ classdef TestZc1BitQuantization < matlab.unittest.TestCase
             t.verifySize(y_2d, size(M));
             t.verifyEqual(real(y_2d), [0, 0; 1, 0]);
         end
+
+        function serialOptimizedMatchesNaiveReference(t)
+            rng(99);
+            x = complex(2 * randi([0, 1], 19, 17) - 1, 2 * randi([0, 1], 19, 17) - 1);
+            rules = ["B0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "L1", "R8", "R9"];
+            for rkey = rules
+                y_r = apply_zc_pseudo15bit(x, rkey, struct("Axis", "range", "DecisionMode", "serial"));
+                ref_r = naive_serial_1d_dim1(x, rkey);
+                t.verifyEqual(y_r, ref_r, "Serial range mismatch for rule " + rkey);
+
+                y_a = apply_zc_pseudo15bit(x, rkey, struct("Axis", "azimuth", "DecisionMode", "serial"));
+                ref_a = naive_serial_1d_dim1(x.', rkey).';
+                t.verifyEqual(y_a, ref_a, "Serial azimuth mismatch for rule " + rkey);
+            end
+        end
+    end
+end
+
+function y = naive_serial_1d_dim1(x, rule_key)
+    re = naive_serial_channel_dim1(real(x), rule_key);
+    im = naive_serial_channel_dim1(imag(x), rule_key);
+    y = complex(re, im);
+end
+
+function v = naive_serial_channel_dim1(x_ch, rule_key)
+    switch string(rule_key)
+        case "B0"
+            flags = [false, false, false, false];
+        case "R1"
+            flags = [true, true, true, true];
+        case "R2"
+            flags = [true, false, false, false];
+        case "R3"
+            flags = [false, true, false, false];
+        case "R4"
+            flags = [false, false, false, true];
+        case "R5"
+            flags = [false, false, true, false];
+        case "R6"
+            flags = [true, false, false, true];
+        case "R7"
+            flags = [false, true, true, false];
+        case "L1"
+            flags = [true, false, true, false];
+        case "R8"
+            flags = [true, true, false, false];
+        case "R9"
+            flags = [false, false, true, true];
+        otherwise
+            error("Unexpected rule key: %s", string(rule_key));
+    end
+    v = x_ch;
+    [n_rows, n_cols] = size(v);
+    for col = 1:n_cols
+        for row = 1:(n_rows - 1)
+            a = v(row, col);
+            b = v(row + 1, col);
+            if a == 1 && b == -1
+                if flags(1), v(row, col) = 0; end
+                if flags(2), v(row + 1, col) = 0; end
+            elseif a == -1 && b == 1
+                if flags(3), v(row, col) = 0; end
+                if flags(4), v(row + 1, col) = 0; end
+            end
+        end
     end
 end
