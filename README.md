@@ -12,7 +12,7 @@
   - `src/quantization/`：非对称 $\operatorname{sgn}_+(0)=+1$ 1-bit 量化与伪 1.5-bit 规则族（`B0`、`R1`–`R9`、`L1`）
   - `src/sarproc/`：`Range_Compress`、`RCMC`、`SAR_Imaging`、标准路径与频域直裁快路径
   - `src/metrics/`：PSNR、SSIM、固定 64×64 GT ROI ENL、256-bin Entropy、频谱泄漏比与配对 Wilcoxon 检验
-  - `src/workflow/`：路径管理、原子 checkpoint 落盘、仅实际参数核对、70 样本 35/35 划分与阶段一快筛引擎
+  - `src/workflow/`：路径管理、原子 checkpoint 落盘、仅实际参数核对、70 样本 35/35 划分、阶段一规则快筛引擎及阶段二（`search` / `confirm` / `evaluate`）引擎
 - `inputs/`：
   - `local_paths.example.m`：本机数据与参数路径配置模板；本地使用前复制为未跟踪的 `inputs/local_paths.m`。
   - `parameters/`：存放本机 `FS60_params.mat`（Git 忽略）。
@@ -26,7 +26,7 @@
 
 1. 复制 `inputs/local_paths.example.m` 为 `inputs/local_paths.m`，确认 `data_root`（如 `G:\MATLAB-G\SAR Full PSF`）与 `parameter_file_60` 指向正确路径。
 2. 在 MATLAB 中打开 `start_zc1bit.m`，保持 `cfg.stage = "preflight"` 点击运行，核对预检输出的校准/测试样本数与阶段一任务规模。
-3. 确认就绪后将 `cfg.stage` 改为 `"screen"` 运行阶段一规则快筛（默认单核运行、`4–6 GB` 内存缓存单轮读盘，按 `ThresholdKey` 扁平断点续算）。
+3. 确认就绪后将 `cfg.stage` 改为 `"screen"` 运行阶段一规则快筛（默认单核运行、`4–6 GB` 内存缓存单轮读盘，按 `ThresholdKey` 扁平断点续算）；快筛完成后可依次运行 `"search"` → `"confirm"` → `"evaluate"`（或 `"all"`）执行阶段二单向四阈值自动 Top 5 寻优、锁参与测试集评估。
 4. 运行轻量单元测试：
 
 ```matlab

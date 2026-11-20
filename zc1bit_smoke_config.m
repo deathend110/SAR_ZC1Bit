@@ -34,6 +34,15 @@ cfg.screen.include_b0_dc = false;
 cfg.screen.sft_baselines = build_smoke_sft_baselines();
 cfg.runtime.cache_gb = 1;
 cfg.runtime.preload_signals = true;
+
+cfg.stage2.range_allocations = [1, 1; 2, 1];
+cfg.stage2.azimuth_allocations = [1, 1; 1, 2];
+cfg.stage2.top_k = 2;
+cfg.stage2.rt_as_grid = [0.2, 0.6];
+cfg.stage2.sft_str_grid = [-2, 0];
+cfg.stage2.sft_freq_grid = [0.15, 0.3];
+cfg.stage2.sft_refine = false;
+
 cfg.stage = "preflight";
 end
 

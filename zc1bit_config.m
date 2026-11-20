@@ -64,6 +64,29 @@ cfg.screen.use_fast_path = true;
 
 % 运行期内存与 I/O 优化设置（单核执行，不启用并行池；不参与断点计算参数校验）
 cfg.runtime = struct("cache_gb", 5, "preload_signals", true);
+
+% 阶段二：单向距离/方位 × 四类阈值独立寻优与评估（自动读取阶段一 Top 5；不含 BARU 与 2D-SFT）
+cfg.stage2 = struct();
+cfg.stage2.branches = ["range_branch", "azimuth_branch"];
+cfg.stage2.range_allocations = [(1:9).', ones(9, 1)];
+cfg.stage2.azimuth_allocations = [ones(9, 1), (1:9).'];
+cfg.stage2.range_threshold_types = ["ZT", "RT", "RSFT"];
+cfg.stage2.azimuth_threshold_types = ["ZT", "RT", "ASFT"];
+cfg.stage2.baseline_variant = "B0_par_raw";
+cfg.stage2.top_k = 5;
+cfg.stage2.distinct_rules_only = false;
+cfg.stage2.selected_variants = string.empty(0, 1);
+cfg.stage2.ranking_file = "";
+cfg.stage2.rt_as_grid = round([0.05, 0.1:0.1:1.5], 6);
+cfg.stage2.sft_str_grid = [-6, -4, -2, 0, 2, 4];
+cfg.stage2.sft_freq_grid = round([0.1, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.5, 1.8, 2.0, 2.2], 6);
+cfg.stage2.sft_refine = true;
+cfg.stage2.sft_refine_str_step = 1;
+cfg.stage2.sft_refine_freq_step = 0.1;
+cfg.stage2.phi0 = 0;
+cfg.stage2.include_b0_transfer = true;
+cfg.stage2.leakage_threshold_ratio = 0.35;
+cfg.stage2.use_fast_path = true;
 end
 
 function lp = read_local_paths(local_paths_file)

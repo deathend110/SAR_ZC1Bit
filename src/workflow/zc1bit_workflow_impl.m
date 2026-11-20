@@ -1,5 +1,5 @@
 function output = zc1bit_workflow_impl(cfg)
-%ZC1BIT_WORKFLOW_IMPL 统一工作流调度入口：默认仅预检，阶段一支持 preflight / screen。
+%ZC1BIT_WORKFLOW_IMPL 统一工作流调度入口：支持 preflight / screen / search / confirm / evaluate / all。
 
 if nargin == 0
     cfg = zc1bit_config();
@@ -20,8 +20,16 @@ switch stage
         return;
     case "screen"
         output.screen = zc1bit_screen_impl(cfg);
-    case {"search", "confirm", "evaluate", "all"}
-        error("zc1bit:StageNotImplemented", ...
-            "阶段 %s 属于阶段二全量校准与评估，待阶段一快筛选出 Top 2-3 规则后按协议推进实现。", stage);
+    case "search"
+        output.search = zc1bit_search_impl(cfg);
+    case "confirm"
+        output.confirm = zc1bit_confirm_impl(cfg);
+    case "evaluate"
+        output.evaluate = zc1bit_evaluate_impl(cfg);
+    case "all"
+        output.screen = zc1bit_screen_impl(cfg);
+        output.search = zc1bit_search_impl(cfg);
+        output.confirm = zc1bit_confirm_impl(cfg);
+        output.evaluate = zc1bit_evaluate_impl(cfg);
 end
 end

@@ -23,7 +23,7 @@ if resuming
         error("zc1bit:ProtocolRecord", "现有 run_record.mat 缺少 record 字段。");
     end
     record = loaded.record;
-    zc1bit_check_parameters(record.signature.config, cfg, "工作流配置");
+    zc1bit_check_parameters(record.signature.config, strip_stage2_field(cfg), "工作流配置");
     zc1bit_check_parameters(record.signature.S60, S60, "成像参数 S60");
     manifest = record.manifest;
     manifest.FilePath = fullfile(cfg.data_root, manifest.Dataset, manifest.File);
@@ -33,7 +33,7 @@ else
     manifest = build_sample_manifest(cfg, S60);
     record = struct();
     record.signature = struct( ...
-        "config", zc1bit_parameters(cfg), ...
+        "config", zc1bit_parameters(strip_stage2_field(cfg)), ...
         "S60", zc1bit_parameters(S60));
     record.manifest = manifest;
     zc1bit_atomic_save(record_path, struct("record", record));
@@ -172,5 +172,12 @@ for k = 1:numel(unique_paths)
     if ~isfile(unique_paths(k))
         error("zc1bit:MissingEchoFile", "回波文件不存在：%s", unique_paths(k));
     end
+end
+end
+
+function out_cfg = strip_stage2_field(cfg)
+out_cfg = cfg;
+if isstruct(out_cfg) && isfield(out_cfg, "stage2")
+    out_cfg = rmfield(out_cfg, "stage2");
 end
 end

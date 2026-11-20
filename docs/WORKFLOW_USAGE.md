@@ -48,9 +48,15 @@ out = run_zc1bit_workflow(cfg);   % 或直接调用 run_zc1bit_screen(cfg)
   - `screen_cal_enl_roi_manifest.csv`：校准集中 `filed` + `port` 样本的 GT 自动 64×64 均匀区 ROI 坐标。
   - `screen_results.mat` 与 `screen_metadata.txt`：完整结构化存档与运行元数据。
 
-### 2.3 阶段二入口（预留）
+### 2.3 阶段二：自动 Top 5 独立寻优、锁参与测试集评估（`search → confirm → evaluate` / `all`）
 
-`run_zc1bit_search`、`run_zc1bit_confirm`、`run_zc1bit_evaluate` 已作为根目录公共入口预留；在阶段一选定优胜规则并按协议授权实现阶段二前，调用这些阶段会显式抛出 `zc1bit:StageNotImplemented`。
+阶段一生成 `results_zc1bit/screen/screen_rule_ranking.csv` 后，阶段二默认**自动排除 `B0` 并读取排名前 5 的最优伪 1.5-bit 变体**，与基线 `B0_par_raw` 共 6 个变体在两条单向主线（距离 `R1A1`–`R9A1` × `{ZT, RT, RSFT}` 与方位 `R1A1`–`R1A9` × `{ZT, RT, ASFT}`，共 54 单元，不含 BARU 与 `2D-SFT`）上执行：
+
+1. **参数寻优（`search`）**：仅使用 35 个校准样本各自独立寻优（SSIM 优先、PSNR 破局），产出 `results_zc1bit/search/{search_selected_variants.csv, search_summary.csv, search_best_params.csv, search_results.mat}`。
+2. **锁参确认（`confirm`）**：校验 54 单元搜索网格完整后锁定独立最优参数，并生成 `b0_transferred` 原参数直迁消融计划，产出 `results_zc1bit/locked/{locked_params.csv, locked_confirm_plan.csv, confirm_results.mat}`。
+3. **测试集评估与统计（`evaluate`）**：严格隔离使用 35 个测试样本评估 PSNR/SSIM/ENL/Entropy/频谱泄漏并执行双侧配对 Wilcoxon 检验，产出 `results_zc1bit/evaluate/` 与 `results_zc1bit/stats/paired_wilcoxon_vs_b0.csv`。
+
+可通过 `cfg.stage = "search"` / `"confirm"` / `"evaluate"` 分步调用（或 `cfg.stage = "all"` 顺序串行复用断点执行），也可按需调整 `cfg.stage2.top_k`、`cfg.stage2.distinct_rules_only`、`cfg.stage2.sft_refine` 与 `cfg.stage2.selected_variants`。
 
 ## 3. 轻量单元测试
 

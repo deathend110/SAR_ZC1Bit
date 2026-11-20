@@ -165,10 +165,9 @@ classdef TestZc1BitWorkflow < matlab.unittest.TestCase
                 t.verifyGreaterThan(height(real_vs), 0);
             end
 
-            % 阶段二未启用前必须明确拒绝对外调用
-            t.verifyError(@() run_zc1bit_search(cfg), "zc1bit:StageNotImplemented");
-            t.verifyError(@() run_zc1bit_confirm(cfg), "zc1bit:StageNotImplemented");
-            t.verifyError(@() run_zc1bit_evaluate(cfg), "zc1bit:StageNotImplemented");
+            % 未完成前序阶段时必须明确拒绝跳过锁参直接 confirm / evaluate
+            t.verifyError(@() run_zc1bit_confirm(cfg), "zc1bit:MissingSearchResults");
+            t.verifyError(@() run_zc1bit_evaluate(cfg), "zc1bit:MissingLockedConfirm");
         end
 
         function cacheModeMatchesStreamingFallback(t)
@@ -213,6 +212,111 @@ classdef TestZc1BitWorkflow < matlab.unittest.TestCase
             loaded = load(v7_file);
             t.verifyEqual(loaded.summary_table, s1);
             t.verifyEqual(loaded.tag, "v7_ok");
+        end
+
+        function stage2AutoTop5SearchConfirmEvaluateClosure(t)
+            folder = TestZc1BitWorkflow.createFixtureDir("stage2_closure");
+            cleanup = onCleanup(@() TestZc1BitWorkflow.removeFixture(folder));
+
+            S60 = smallImagingParameters();
+            param_file = fullfile(folder, "S60_smoke.mat");
+            save(param_file, "-struct", "S60");
+
+            raw_root = fullfile(folder, "raw");
+            scene_dir = fullfile(raw_root, "SmokeScene");
+            mkdir(scene_dir);
+            rng(33);
+            raw = complex(randn(S60.nrn, 24), randn(S60.nrn, 24));
+            save(fullfile(scene_dir, "rstart 1.mat"), "raw", "-v7.3");
+
+            cfg = zc1bit_smoke_config(raw_root, param_file);
+            cfg.results_root = fullfile(folder, "results");
+            cfg.stage2.top_k = 5;
+            cfg.stage2.sft_refine = true;
+
+            % 未运行阶段一时，自动 Top 5 解析与阶段二执行顺序守卫必须报错
+            t.verifyError(@() zc1bit_resolve_stage2_variants(cfg), "zc1bit:MissingScreenRanking");
+            t.verifyError(@() run_zc1bit_confirm(cfg), "zc1bit:MissingSearchResults");
+            t.verifyError(@() run_zc1bit_evaluate(cfg), "zc1bit:MissingLockedConfirm");
+
+            % 先运行阶段一生成 screen_rule_ranking.csv
+            cfg.stage = "screen";
+            out_s1 = run_zc1bit_workflow(cfg);
+            rank_tbl = out_s1.screen.ranking_table;
+
+            % 验证自动读取 Top 5 非 B0 变体 + B0_par_raw（共 6 变体）及去重开关
+            sel_all = zc1bit_resolve_stage2_variants(cfg, out_s1.paths);
+            t.verifyEqual(height(sel_all), 6);
+            t.verifyEqual(sel_all.VariantKey(1), "B0_par_raw");
+            t.verifyEqual(sel_all.VariantRole, ["baseline"; "top1"; "top2"; "top3"; "top4"; "top5"]);
+            expected_non_b0 = rank_tbl.VariantKey(rank_tbl.RuleKey ~= "B0");
+            t.verifyEqual(sel_all.VariantKey(2:6), expected_non_b0(1:5));
+
+            cfg_distinct = cfg;
+            cfg_distinct.stage2.distinct_rules_only = true;
+            cfg_distinct.stage2.top_k = 3;
+            sel_distinct = zc1bit_resolve_stage2_variants(cfg_distinct, out_s1.paths);
+            cand_rules = sel_distinct.RuleKey(2:end);
+            t.verifyEqual(numel(unique(cand_rules)), numel(cand_rules));
+
+            % 串行执行阶段二 search -> confirm -> evaluate
+            out_search = run_zc1bit_search(cfg);
+            t.verifyTrue(isfile(fullfile(out_search.output_dir, "search_selected_variants.csv")));
+            t.verifyTrue(isfile(fullfile(out_search.output_dir, "search_summary.csv")));
+            t.verifyTrue(isfile(fullfile(out_search.output_dir, "search_best_params.csv")));
+            t.verifyTrue(isfile(fullfile(out_search.output_dir, "search_results.mat")));
+            t.verifyTrue(isfile(fullfile(out_search.output_dir, "search_metadata.txt")));
+            t.verifyTrue(all(out_search.cal_manifest.Split == "calibration"));
+            t.verifyEqual(height(out_search.best_params_table), height(out_search.units) * 6);
+
+            out_confirm = run_zc1bit_confirm(cfg);
+            t.verifyTrue(isfile(fullfile(out_confirm.output_dir, "locked_params.csv")));
+            t.verifyTrue(isfile(fullfile(out_confirm.output_dir, "locked_confirm_plan.csv")));
+            t.verifyTrue(isfile(fullfile(out_confirm.output_dir, "confirm_results.mat")));
+            t.verifyTrue(isfile(fullfile(out_confirm.output_dir, "confirm_metadata.txt")));
+            t.verifyTrue(any(out_confirm.locked_confirm_plan.Track == "independent_recalibrated"));
+            t.verifyTrue(any(out_confirm.locked_confirm_plan.Track == "b0_transferred"));
+
+            out_eval = run_zc1bit_evaluate(cfg);
+            t.verifyTrue(isfile(fullfile(out_eval.output_dir, "evaluate_detail.csv")));
+            t.verifyTrue(isfile(fullfile(out_eval.output_dir, "evaluate_summary.csv")));
+            t.verifyTrue(isfile(fullfile(out_eval.output_dir, "evaluate_leakage_summary.csv")));
+            t.verifyTrue(isfile(fullfile(out_eval.output_dir, "evaluate_test_enl_roi_manifest.csv")));
+            t.verifyTrue(isfile(fullfile(out_eval.output_dir, "evaluate_results.mat")));
+            t.verifyTrue(isfile(fullfile(out_eval.stats_dir, "paired_wilcoxon_vs_b0.csv")));
+
+            % 测试集严格隔离：评估明细只含测试样本（LocalSampleIdx == 2），绝不含校准样本
+            t.verifyTrue(all(out_eval.detail_table.LocalSampleIdx == 2));
+            t.verifyFalse(any(out_eval.detail_table.LocalSampleIdx == 1));
+            t.verifyGreaterThan(height(out_eval.wilcoxon_table), 0);
+            t.verifyTrue(all(isfinite(out_eval.wilcoxon_table.DeltaSSIM_Mean)));
+            t.verifyGreaterThan(height(out_eval.leakage_table), 0);
+            t.verifyTrue(all(out_eval.leakage_table.OffSupportRatio >= 0 & out_eval.leakage_table.OffSupportRatio <= 1));
+
+            % 验证扁平断点结构（无子目录）与全 NaN 覆盖回波后的 100% 断点命中零重算
+            for cp_sub = ["search", "evaluate"]
+                cp_entries = dir(fullfile(out_s1.paths.checkpoints, cp_sub));
+                cp_names = string({cp_entries.name});
+                t.verifyFalse(any([cp_entries.isdir] & ~ismember(cp_names, [".", ".."])));
+            end
+            raw_nan = complex(nan(S60.nrn, 24), nan(S60.nrn, 24));
+            save(fullfile(scene_dir, "rstart 1.mat"), "raw_nan", "-v7.3");
+            cfg.runtime.cache_gb = 2;
+            out_search_resumed = run_zc1bit_search(cfg);
+            out_eval_resumed = run_zc1bit_evaluate(cfg);
+            t.verifyEqual(out_search_resumed.best_params_table.Calibration_SSIM_Mean, out_search.best_params_table.Calibration_SSIM_Mean);
+            t.verifyEqual(out_eval_resumed.summary_table.SSIM_Mean, out_eval.summary_table.SSIM_Mean);
+
+            % 验证正式配置在本地 FS60_params.mat 下构建全部 54 个阶段二单元（无 BARU、无 2D-SFT）
+            real_cfg = zc1bit_config();
+            if isfile(real_cfg.parameter_file_60)
+                S60_real = load(real_cfg.parameter_file_60);
+                real_units = zc1bit_build_stage2_units(real_cfg, S60_real);
+                t.verifyEqual(height(real_units), 54);
+                t.verifyEqual(numel(unique(real_units.UnitKey)), 54);
+                t.verifyFalse(any(real_units.ThresholdType == "2D-SFT"));
+                t.verifyTrue(all(real_units.Range_q == 1 | real_units.Azimuth_q == 1));
+            end
         end
     end
 
