@@ -1,0 +1,57 @@
+# ==========================================
+# SAR-ZC1Bit .gitignore (Windows + MATLAB + Claude Code)
+# 放入仓库根目录后请重命名为 .gitignore
+# ==========================================
+
+# 本地工具与编辑器配置
+.obsidian/
+.workbuddy/
+.vscode/
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Windows 系统杂项
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+desktop.ini
+
+# MATLAB 临时与自动保存文件
+*.asv
+*.autosave
+*.m~
+*.mex*
+*.slxc
+slprj/
+matlab_crash_dump.*
+java.log.*
+
+# 本地私人路径配置与临时 Prompt
+inputs/local_paths.m
+prompt*.md
+INIT_PROMPT.md
+
+# 参考文献与辅助素材
+papers/
+assert/
+
+# 实验输出、缓存、断点与大体积结果文件
+/results_zc1bit/
+results*/
+checkpoints*/
+*.mat
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+*.pdf
+*.eps
+*.fig
+*.csv
+*.zip
+*.7z
+
+# 保留版本控制的小型参考参数表与文档
+!/inputs/reference/*.csv
+!docs/**/*.md
