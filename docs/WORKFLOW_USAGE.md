@@ -6,6 +6,7 @@
    - `paths.data_root`：外部 180 MHz 原始回波目录（例如 `G:\MATLAB-G\SAR Full PSF`）。
    - `paths.parameter_file_60`：`FS60_params.mat` 文件路径（默认指向 `inputs/parameters/FS60_params.mat`）。
    - `paths.results_root`：结果、断点与报告输出目录（默认 `results_zc1bit/`）。
+   - `paths.tmp_root`：工作区临时目录（默认 `tmp/`，按 `tmp/tests/`、`tmp/smoke/`、`tmp/scratch/` 分类保存，Git 忽略）。
 2. 所有阶段入口均通过 `setup_zc1bit_paths(cfg)` 仅注入本仓库目录及 `src/` 子目录，并持有 `onCleanup` 目录守卫，支持从任意 MATLAB 当前目录调用且在异常退出时自动恢复工作目录。
 
 ## 2. 阶段执行说明
@@ -53,7 +54,7 @@ out = run_zc1bit_workflow(cfg);   % 或直接调用 run_zc1bit_screen(cfg)
 
 ## 3. 轻量单元测试
 
-`tests/` 下的所有测试不依赖外部 `SAR Full PSF` 大数据集，使用小型合成信号与虚拟临时目录验证核心数学性质、快速成像等价性及断点恢复逻辑：
+`tests/` 下的所有测试不依赖外部 `SAR Full PSF` 大数据集，使用小型合成信号并在工作区 `<repo_root>/tmp/tests/` 下创建隔离临时目录（测试退出自动清理，不写入 C 盘），验证核心数学性质、快速成像等价性及断点恢复逻辑：
 
 ```matlab
 results = runtests("tests");

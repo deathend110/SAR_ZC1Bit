@@ -37,6 +37,8 @@ assert/
 
 # 实验输出、缓存、断点与大体积结果文件
 /results_zc1bit/
+/tmp/
+tmp/
 results*/
 checkpoints*/
 *.mat

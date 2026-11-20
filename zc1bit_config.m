@@ -18,10 +18,16 @@ if isfile(local_paths_file)
     else
         cfg.results_root = fullfile(repo_root, "results_zc1bit");
     end
+    if isfield(lp, "tmp_root") && strlength(string(lp.tmp_root)) > 0
+        cfg.tmp_root = string(lp.tmp_root);
+    else
+        cfg.tmp_root = fullfile(repo_root, "tmp");
+    end
 else
     cfg.data_root = "";
     cfg.parameter_file_60 = fullfile(repo_root, "inputs", "parameters", "FS60_params.mat");
     cfg.results_root = fullfile(repo_root, "results_zc1bit");
+    cfg.tmp_root = fullfile(repo_root, "tmp");
 end
 
 % 统一样本与指标基准口径（对齐 EXPERIMENT_PROTOCOL.md）

@@ -1,11 +1,18 @@
 function cfg = zc1bit_smoke_config(fixture_root, parameter_file)
 %ZC1BIT_SMOKE_CONFIG 轻量冒烟闭环配置（单场景、少量规则与阈值档位，默认 preflight）。
-% 用于测试与快速闭环校验，不依赖外部 70 样本大数据集。
+% 用于测试与快速闭环校验，不依赖外部 70 样本大数据集；未指定目录时默认落在工作区 tmp/smoke。
 
 cfg = zc1bit_config();
-cfg.data_root = string(fixture_root);
-cfg.results_root = fullfile(string(fixture_root), "results_zc1bit");
-cfg.parameter_file_60 = string(parameter_file);
+if nargin < 1 || strlength(string(fixture_root)) == 0
+    fixture_root = fullfile(cfg.tmp_root, "smoke");
+else
+    fixture_root = string(fixture_root);
+end
+cfg.data_root = fixture_root;
+cfg.results_root = fullfile(fixture_root, "results_zc1bit");
+if nargin >= 2 && strlength(string(parameter_file)) > 0
+    cfg.parameter_file_60 = string(parameter_file);
+end
 cfg.dataset_names = "SmokeScene";
 cfg.enl_dataset_names = "SmokeScene";
 cfg.num_samples_per_dataset = 2;

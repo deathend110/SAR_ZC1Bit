@@ -14,8 +14,7 @@ classdef TestZc1BitWorkflow < matlab.unittest.TestCase
     methods (Test)
         function pathGuardIsolatesForeignDirectoryAndRestoresOnError(t)
             cfg = zc1bit_config();
-            folder = string(tempname);
-            mkdir(folder);
+            folder = TestZc1BitWorkflow.createFixtureDir("pathguard");
             cleanup = onCleanup(@() TestZc1BitWorkflow.removeFixture(folder));
 
             shadow = fullfile(folder, "Range_Compress.m");
@@ -43,8 +42,7 @@ classdef TestZc1BitWorkflow < matlab.unittest.TestCase
         end
 
         function manifestSplitAndParameterOnlyCheckpointResume(t)
-            folder = string(tempname);
-            mkdir(folder);
+            folder = TestZc1BitWorkflow.createFixtureDir("manifest");
             cleanup = onCleanup(@() TestZc1BitWorkflow.removeFixture(folder));
 
             S60 = smallImagingParameters();
@@ -68,11 +66,19 @@ classdef TestZc1BitWorkflow < matlab.unittest.TestCase
             t.verifyEqual(m.LocalSampleIdx(m.Split == "calibration"), [1; 3; 5; 7; 9]);
             t.verifyEqual(m.LocalSampleIdx(m.Split == "test"), [2; 4; 6; 8; 10]);
 
-            % 改变 data_root、results_root、runtime 内存参数等非计算参数，检查点仍应匹配通过
+            base_cfg = zc1bit_config();
+            t.verifyEqual(base_cfg.tmp_root, fullfile(base_cfg.repo_root, "tmp"));
+            t.verifyTrue(startsWith(lower(folder), lower(fullfile(base_cfg.repo_root, "tmp", "tests") + string(filesep))));
+            t.verifyEqual(out1.paths.tmp, base_cfg.tmp_root);
+            t.verifyError(@() TestZc1BitWorkflow.removeFixture(base_cfg.repo_root), "zc1bit:UnsafeCleanup");
+            t.verifyError(@() TestZc1BitWorkflow.removeFixture(TestZc1BitWorkflow.workspaceTestTmpRoot()), "zc1bit:UnsafeCleanup");
+
+            % 改变 data_root、results_root、tmp_root、runtime 内存参数等非计算参数，检查点仍应匹配通过
             moved_raw = fullfile(folder, "raw_moved");
             copyfile(fullfile(folder, "raw"), moved_raw);
             cfg2 = cfg;
             cfg2.data_root = moved_raw;
+            cfg2.tmp_root = fullfile(folder, "tmp_moved");
             cfg2.runtime.cache_gb = 2;
             cfg2.runtime.preload_signals = false;
             cfg2.screen.use_fast_path = false;
@@ -93,8 +99,7 @@ classdef TestZc1BitWorkflow < matlab.unittest.TestCase
         end
 
         function stage1SmokeClosureAndTestIsolation(t)
-            folder = string(tempname);
-            mkdir(folder);
+            folder = TestZc1BitWorkflow.createFixtureDir("smoke");
             cleanup = onCleanup(@() TestZc1BitWorkflow.removeFixture(folder));
 
             S60 = smallImagingParameters();
@@ -167,8 +172,7 @@ classdef TestZc1BitWorkflow < matlab.unittest.TestCase
         end
 
         function cacheModeMatchesStreamingFallback(t)
-            folder = string(tempname);
-            mkdir(folder);
+            folder = TestZc1BitWorkflow.createFixtureDir("cache_vs_stream");
             cleanup = onCleanup(@() TestZc1BitWorkflow.removeFixture(folder));
 
             S60 = smallImagingParameters();
@@ -213,11 +217,26 @@ classdef TestZc1BitWorkflow < matlab.unittest.TestCase
     end
 
     methods (Static)
+        function root = workspaceTestTmpRoot()
+            repo = string(fileparts(fileparts(mfilename("fullpath"))));
+            root = fullfile(repo, "tmp", "tests");
+        end
+
+        function folder = createFixtureDir(tag)
+            root = TestZc1BitWorkflow.workspaceTestTmpRoot();
+            if ~isfolder(root)
+                mkdir(root);
+            end
+            [~, uniq] = fileparts(tempname(char(root)));
+            folder = fullfile(root, string(tag) + "_" + string(uniq));
+            mkdir(folder);
+        end
+
         function removeFixture(folder)
             resolved = string(java.io.File(char(folder)).getCanonicalPath());
-            root = string(java.io.File(tempdir).getCanonicalPath());
+            root = string(java.io.File(char(TestZc1BitWorkflow.workspaceTestTmpRoot())).getCanonicalPath());
             if resolved == root || ~startsWith(lower(resolved), lower(root + string(filesep)))
-                error("zc1bit:UnsafeCleanup", "拒绝清理临时目录以外的路径：%s", resolved);
+                error("zc1bit:UnsafeCleanup", "拒绝清理工作区测试临时目录以外的路径：%s", resolved);
             end
             if isfolder(resolved)
                 rmdir(resolved, "s");

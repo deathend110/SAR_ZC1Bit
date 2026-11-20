@@ -20,6 +20,7 @@
 - `tests/`：不依赖外部大数据集的轻量单元测试。
 - `docs/`：协议文档、技术手册与 [工作流使用说明](docs/WORKFLOW_USAGE.md)。
 - `results_zc1bit/`：实验产物与断点目录（按 `protocol/`、`screen/`、`checkpoints/` 等子目录存放，Git 忽略）。
+- `tmp/`：工作区临时目录（`tmp/tests/`、`tmp/smoke/`、`tmp/scratch/`，Git 忽略），单元测试与临时中间产物均保存于工作区内，严禁写入 C 盘。
 
 ## 快速开始
 

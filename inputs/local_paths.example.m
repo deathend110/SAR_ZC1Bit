@@ -9,4 +9,5 @@ paths = struct();
 paths.data_root = "G:\MATLAB-G\SAR Full PSF";
 paths.parameter_file_60 = fullfile(repo_root, "inputs", "parameters", "FS60_params.mat");
 paths.results_root = fullfile(repo_root, "results_zc1bit");
+paths.tmp_root = fullfile(repo_root, "tmp");
 end

@@ -1,5 +1,5 @@
 function p = zc1bit_paths(cfg)
-%ZC1BIT_PATHS 统一生成结果、断点与报告目录结构，禁止在各脚本中手写路径拼接。
+%ZC1BIT_PATHS 统一生成结果、断点、报告与工作区临时目录结构，禁止在各脚本中手写路径拼接。
 
 p = struct();
 p.root = string(cfg.results_root);
@@ -11,4 +11,11 @@ p.evaluate = fullfile(p.root, "evaluate");
 p.stats = fullfile(p.root, "stats");
 p.figures = fullfile(p.root, "figures");
 p.checkpoints = fullfile(p.root, "checkpoints");
+if isfield(cfg, "tmp_root") && strlength(string(cfg.tmp_root)) > 0
+    p.tmp = string(cfg.tmp_root);
+elseif isfield(cfg, "repo_root") && strlength(string(cfg.repo_root)) > 0
+    p.tmp = fullfile(string(cfg.repo_root), "tmp");
+else
+    p.tmp = fullfile(p.root, "tmp");
+end
 end
