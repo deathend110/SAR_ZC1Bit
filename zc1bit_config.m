@@ -65,7 +65,7 @@ cfg.screen.use_fast_path = true;
 % 运行期内存与 I/O 优化设置（单核执行，不启用并行池；不参与断点计算参数校验）
 cfg.runtime = struct("cache_gb", 5, "preload_signals", true);
 
-% 阶段二：单向距离/方位 × 四类阈值独立寻优与评估（自动读取阶段一 Top 5；不含 BARU 与 2D-SFT）
+% 阶段二：单向距离/方位 × 四类阈值独立寻优与评估（自动读取阶段一跨机理族 Top 6；不含 BARU 与 2D-SFT）
 cfg.stage2 = struct();
 cfg.stage2.branches = ["range_branch", "azimuth_branch"];
 cfg.stage2.range_allocations = [(1:9).', ones(9, 1)];
@@ -80,7 +80,7 @@ cfg.stage2.family_diversified = true;
 cfg.stage2.selected_variants = string.empty(0, 1);
 cfg.stage2.ranking_file = "";
 cfg.stage2.rt_as_grid = round([0.05, 0.1:0.1:1.5], 6);
-cfg.stage2.sft_str_grid = [-6, -4, -2, 0, 2, 4];
+cfg.stage2.sft_str_grid = [-6, -4, -2, 0, 2, 4, 6];
 cfg.stage2.sft_freq_grid = round([0.1, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.5, 1.8, 2.0, 2.2], 6);
 cfg.stage2.sft_refine = true;
 cfg.stage2.sft_refine_str_step = 1;
