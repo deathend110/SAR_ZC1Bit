@@ -43,6 +43,9 @@ if isempty(manual_keys)
     if ~isfield(s2, "dedup_equivalent") || logical(s2.dedup_equivalent)
         non_b0 = deduplicate_equivalent_variants(non_b0);
     end
+    if isfield(s2, "family_diversified") && logical(s2.family_diversified)
+        non_b0 = pick_family_representatives(non_b0);
+    end
     if isfield(s2, "distinct_rules_only") && logical(s2.distinct_rules_only)
         non_b0 = pick_first_per_rule(non_b0);
     end
@@ -217,6 +220,45 @@ for k = 1:n
     end
 end
 out_tbl = tbl(keep, :);
+end
+
+function out_tbl = pick_family_representatives(tbl)
+% 按物理过零机理族去重覆盖：
+%   {R1} 保留非等价的 parallel / serial（各自最多 1 席）；
+%   {R2,R3,R4,R5}、{R6,R7}、{R8,R9}、{L1} 每族仅保留阶段一排名最优的 1 名代表。
+n = height(tbl);
+keep = false(n, 1);
+seen_slots = string.empty(0, 1);
+for k = 1:n
+    fam = rule_mechanism_family(tbl.RuleKey(k));
+    if fam == "F_BOTH_BOTH"
+        slot_key = fam + "_" + tbl.DecisionMode(k);
+    else
+        slot_key = fam;
+    end
+    if ~ismember(slot_key, seen_slots)
+        seen_slots(end + 1, 1) = slot_key; %#ok<AGROW>
+        keep(k) = true;
+    end
+end
+out_tbl = tbl(keep, :);
+end
+
+function fam = rule_mechanism_family(rule_key)
+switch string(rule_key)
+    case "R1"
+        fam = "F_BOTH_BOTH";
+    case {"R2", "R3", "R4", "R5"}
+        fam = "F_ONE_ONE";
+    case {"R6", "R7"}
+        fam = "F_BOTH_ONE";
+    case {"R8", "R9"}
+        fam = "F_ONE_BOTH";
+    case "L1"
+        fam = "F_L1";
+    otherwise
+        fam = "F_OTHER_" + string(rule_key);
+end
 end
 
 function out_tbl = pick_first_per_rule(tbl)

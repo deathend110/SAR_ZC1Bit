@@ -256,9 +256,16 @@ classdef TestZc1BitWorkflow < matlab.unittest.TestCase
 
             cfg_nodup = cfg;
             cfg_nodup.stage2.dedup_equivalent = false;
+            cfg_nodup.stage2.family_diversified = false;
             sel_nodup = zc1bit_resolve_stage2_variants(cfg_nodup, out_s1.paths);
             expected_non_b0 = rank_tbl.VariantKey(rank_tbl.RuleKey ~= "B0");
             t.verifyEqual(sel_nodup.VariantKey(2:6), expected_non_b0(1:5));
+
+            % 验证跨机理族去重：单沿单边({R2..R5})、双沿单边({R6,R7})、单沿双边({R8,R9})每族至多 1 席
+            non_r1 = sel_all.RuleKey(sel_all.RuleKey ~= "B0" & sel_all.RuleKey ~= "R1");
+            t.verifyLessThanOrEqual(sum(ismember(non_r1, ["R2", "R3", "R4", "R5"])), 1);
+            t.verifyLessThanOrEqual(sum(ismember(non_r1, ["R6", "R7"])), 1);
+            t.verifyLessThanOrEqual(sum(ismember(non_r1, ["R8", "R9"])), 1);
 
             cfg_distinct = cfg;
             cfg_distinct.stage2.distinct_rules_only = true;

@@ -50,7 +50,7 @@ out = run_zc1bit_workflow(cfg);   % 或直接调用 run_zc1bit_screen(cfg)
 
 ### 2.3 阶段二：自动 Top 5 独立寻优、锁参与测试集评估（`search → confirm → evaluate` / `all`）
 
-阶段一生成 `results_zc1bit/screen/screen_rule_ranking.csv` 与 `screen_summary.csv` 后，阶段二默认按**统计显著胜出次数（`SSIMSigWinCount`）→ 正增益次数（`SSIMWinCount`）→ 过采样区间（$Q > 1$）平均 SSIM/PSNR** 自动排除 `B0` 并合并数值等价冗余（`cfg.stage2.dedup_equivalent = true`，优先保留 `raw` 与 `parallel`），挑选最优的 **Top 5 伪 1.5-bit 变体**与基线 `B0_par_raw` 共 6 个变体在两条单向主线（距离 `R1A1`–`R9A1` × `{ZT, RT, RSFT}` 与方位 `R1A1`–`R1A9` × `{ZT, RT, ASFT}`，共 54 单元，不含 BARU 与 `2D-SFT`）上执行：
+阶段一生成 `results_zc1bit/screen/screen_rule_ranking.csv` 与 `screen_summary.csv` 后，阶段二默认按**统计显著胜出次数（`SSIMSigWinCount`）→ 正增益次数（`SSIMWinCount`）→ 过采样区间（$Q > 1$）平均 SSIM/PSNR** 自动排除 `B0`、合并数值等价冗余（`cfg.stage2.dedup_equivalent = true`）并执行**跨 5 大过零机理族去重覆盖**（`cfg.stage2.family_diversified = true`，默认 `top_k = 6`，保留 `R1` 非等价 `par`/`ser` 与其余 4 大机理族各自最优代表，共 6 个候选变体 + 基线 `B0_par_raw`）在两条单向主线（距离 `R1A1`–`R9A1` × `{ZT, RT, RSFT}` 与方位 `R1A1`–`R1A9` × `{ZT, RT, ASFT}`，共 54 单元，不含 BARU 与 `2D-SFT`）上执行：
 
 1. **参数寻优（`search`）**：仅使用 35 个校准样本各自独立寻优（SSIM 优先、PSNR 破局），产出 `results_zc1bit/search/{search_selected_variants.csv, search_summary.csv, search_best_params.csv, search_results.mat}`。
 2. **锁参确认（`confirm`）**：校验 54 单元搜索网格完整后锁定独立最优参数，并生成 `b0_transferred` 原参数直迁消融计划，产出 `results_zc1bit/locked/{locked_params.csv, locked_confirm_plan.csv, confirm_results.mat}`。

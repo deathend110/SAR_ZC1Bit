@@ -3,8 +3,8 @@
 % 说明：
 %   1. 默认保持一阶段关闭（run_stage1 = false），直接基于阶段一排名结果一键串联运行阶段二：
 %      search（35 校准样本独立寻优） -> confirm（锁参与 B0 直迁消融） -> evaluate（35 测试样本评估与统计）。
-%   2. 阶段二默认采用优化后口径（SSIMSigWinCount -> SSIMWinCount -> Q>1 过采样 MeanSSIM/MeanPSNR），
-%      自动去除等效冗余并挑选最优 Top 5 非 B0 变体 + 基线 B0_par_raw 对比。
+%   2. 阶段二默认采用跨 5 大过零机理族去重口径（SSIMSigWinCount -> SSIMWinCount -> Q>1 过采样 MeanSSIM），
+%      自动选出覆盖全部 10 条规则机理的 Top 6 变体（R1_par/ser + R9 + R3 + L1 + R7）与基线 B0_par_raw 对比。
 clc;
 
 script_directory = string(fileparts(mfilename("fullpath")));
@@ -23,12 +23,13 @@ cfg.runtime.preload_signals = true;
 cfg.screen.use_fast_path = true;
 cfg.stage2.use_fast_path = true;
 
-% 阶段二自动 Top 5 口径参数（按需取消注释微调）：
-cfg.stage2.top_k = 5;
+% 阶段二自动跨机理族 Top 6 口径参数（按需取消注释微调）：
+cfg.stage2.top_k = 6;
 cfg.stage2.dedup_equivalent = true;
+cfg.stage2.family_diversified = true;
 % cfg.stage2.distinct_rules_only = false;
 % cfg.stage2.sft_refine = true;
-% cfg.stage2.selected_variants = ["R1_par_raw", "R1_ser_raw", "R9_par_raw", "R8_par_raw", "R3_par_dc"];
+% cfg.stage2.selected_variants = ["R1_par_raw", "R1_ser_raw", "R9_par_raw", "R3_par_dc", "L1_par_raw", "R7_par_dc"];
 
 %% ============================ 启动流程 =================================
 fprintf("回波根目录：%s\n", cfg.data_root);
