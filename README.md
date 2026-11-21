@@ -27,7 +27,8 @@
 1. 复制 `inputs/local_paths.example.m` 为 `inputs/local_paths.m`，确认 `data_root`（如 `G:\MATLAB-G\SAR Full PSF`）与 `parameter_file_60` 指向正确路径。
 2. 在 MATLAB 中打开 `start_zc1bit.m`，保持 `cfg.stage = "preflight"` 点击运行，核对预检输出的校准/测试样本数与阶段一任务规模。
 3. 确认就绪后将 `cfg.stage` 改为 `"screen"` 运行阶段一规则快筛（默认单核运行、`4–6 GB` 内存缓存单轮读盘，按 `ThresholdKey` 扁平断点续算）；快筛完成后可依次运行 `"search"` → `"confirm"` → `"evaluate"`（或 `"all"`）执行阶段二单向四阈值自动 Top 5 寻优、锁参与测试集评估。
-4. 运行轻量单元测试：
+4. 阶段二完成后，可直接打开 `scripts/` 下的独立脚本生成 SSIM/PSNR vs Q 曲线、ENL/机理诊断、最优参数汇总与最优指标 SAR 图像；详见 [scripts/README.md](scripts/README.md)。
+5. 运行轻量单元测试：
 
 ```matlab
 results = runtests("tests");

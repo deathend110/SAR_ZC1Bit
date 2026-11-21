@@ -360,7 +360,7 @@ function ltbl = compute_group_leakage( ...
 ttype = string(unit.ThresholdType);
 t_opts = struct("nyquist_margin", cfg.nyquist_margin, "carrier", carrier);
 if ttype == "RT"
-    rt_seed = stable_leak_seed(cfg.seed, seed_tag, sample_row.SampleID);
+    rt_seed = zc1bit_stage2_rt_seed(cfg.seed, seed_tag, sample_row.SampleID);
     t_opts.rand_stream = RandStream("mt19937ar", "Seed", rt_seed);
 end
 U = build_threshold(sig_up, sgrid, t_spec, S60, t_opts);
@@ -608,15 +608,6 @@ end
 if ~isscalar(cache_gb) || ~isfinite(cache_gb) || cache_gb <= 0
     error("zc1bit:InvalidCacheBudget", "cfg.runtime.cache_gb 必须为正有限标量。");
 end
-end
-
-function seed = stable_leak_seed(base_seed, seed_tag, sample_id)
-chars = double(char(string(seed_tag)));
-h = 0;
-for k = 1:numel(chars)
-    h = mod(h * 131 + chars(k), 1000003);
-end
-seed = mod(double(base_seed) + h * 1000 + double(sample_id), 2^31 - 1);
 end
 
 function validate_eval_detail(detail_table)

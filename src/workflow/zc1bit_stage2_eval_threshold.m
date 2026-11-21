@@ -20,7 +20,7 @@ aq = double(sgrid.q_azimuth);
 ttype = string(threshold_spec.ThresholdType);
 t_opts = struct("nyquist_margin", cfg.nyquist_margin, "carrier", carrier);
 if ttype == "RT"
-    rt_seed = stable_stage2_rt_seed(cfg.seed, seed_tag, sid);
+    rt_seed = zc1bit_stage2_rt_seed(cfg.seed, seed_tag, sid);
     t_opts.rand_stream = RandStream("mt19937ar", "Seed", rt_seed);
 end
 
@@ -82,13 +82,4 @@ rows = table( ...
     'VariantKey', 'RuleKey', 'DecisionMode', 'RemoveDC', ...
     'PSNR', 'SSIM', 'Entropy', 'ENL', 'GT_ENL', 'AbsENLDiff', ...
     'ZeroRatio', 'MeanBiasReal', 'MeanBiasImag', 'AbsMeanBias'});
-end
-
-function seed = stable_stage2_rt_seed(base_seed, seed_tag, sample_id)
-chars = double(char(string(seed_tag)));
-h = 0;
-for k = 1:numel(chars)
-    h = mod(h * 131 + chars(k), 1000003);
-end
-seed = mod(double(base_seed) + h * 1000 + double(sample_id), 2^31 - 1);
 end

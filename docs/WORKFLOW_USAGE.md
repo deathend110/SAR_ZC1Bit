@@ -58,6 +58,16 @@ out = run_zc1bit_workflow(cfg);   % 或直接调用 run_zc1bit_screen(cfg)
 
 可通过 `cfg.stage = "search"` / `"confirm"` / `"evaluate"` 分步调用（或 `cfg.stage = "all"` 顺序串行复用断点执行），也可按需调整 `cfg.stage2.top_k`、`cfg.stage2.distinct_rules_only`、`cfg.stage2.sft_refine` 与 `cfg.stage2.selected_variants`。
 
+### 2.4 阶段二结果图表与成像脚本（`scripts/`）
+
+阶段二完成后，`scripts/` 下的脚本可独立打开运行，输出到 `results_zc1bit/figures/`：
+
+- `plot_ssim_vs_q.m` / `plot_psnr_vs_q.m`：测试集与校准集的指标-vs-Q 曲线，含“每个变体与 B0 的两线图”和“每个阈值下的多线总览图”。
+- `plot_delta_metric_vs_q.m`、`plot_enl_vs_q.m`、`plot_mechanism_vs_q.m`、`plot_optimal_params_vs_q.m`、`plot_final_gain_bars.m`、`plot_transfer_ablation.m`：Δ指标、ENL、ZeroRatio/DC 偏置、最优参数、汇总增益与重校准消融。
+- `render_best_unit_images.m` / `render_common_unit_images.m`：6 个过零变体 + B0 的最优指标 SAR 图像；前者按各方法测试集最优单元，后者固定共同单元做受控对比。
+
+详细说明、可调参数与数据口径见 [scripts/README.md](../scripts/README.md)。
+
 ## 3. 轻量单元测试
 
 `tests/` 下的所有测试不依赖外部 `SAR Full PSF` 大数据集，使用小型合成信号并在工作区 `<repo_root>/tmp/tests/` 下创建隔离临时目录（测试退出自动清理，不写入 C 盘），验证核心数学性质、快速成像等价性及断点恢复逻辑：
