@@ -231,6 +231,7 @@ classdef TestZc1BitWorkflow < matlab.unittest.TestCase
 
             cfg = zc1bit_smoke_config(raw_root, param_file);
             cfg.results_root = fullfile(folder, "results");
+            cfg.screen.rules = ["B0", "R1", "R3", "R4", "R7", "L1", "R9"];
             cfg.stage2.top_k = 5;
             cfg.stage2.sft_refine = true;
 
@@ -239,18 +240,25 @@ classdef TestZc1BitWorkflow < matlab.unittest.TestCase
             t.verifyError(@() run_zc1bit_confirm(cfg), "zc1bit:MissingSearchResults");
             t.verifyError(@() run_zc1bit_evaluate(cfg), "zc1bit:MissingLockedConfirm");
 
-            % 先运行阶段一生成 screen_rule_ranking.csv
+            % 先运行阶段一生成新版 screen_rule_ranking.csv（含过采样指标列）
             cfg.stage = "screen";
             out_s1 = run_zc1bit_workflow(cfg);
             rank_tbl = out_s1.screen.ranking_table;
+            t.verifyTrue(all(ismember(["UpsampledConfigCount", "UpsampledMeanSSIM", "UpsampledMeanPSNR"], ...
+                string(rank_tbl.Properties.VariableNames))));
 
-            % 验证自动读取 Top 5 非 B0 变体 + B0_par_raw（共 6 变体）及去重开关
+            % 验证优化后自动读取 Top 5 非 B0 变体 + B0_par_raw（共 6 变体）及去冗余/去重开关
             sel_all = zc1bit_resolve_stage2_variants(cfg, out_s1.paths);
             t.verifyEqual(height(sel_all), 6);
             t.verifyEqual(sel_all.VariantKey(1), "B0_par_raw");
             t.verifyEqual(sel_all.VariantRole, ["baseline"; "top1"; "top2"; "top3"; "top4"; "top5"]);
+            t.verifyFalse(any(sel_all.RuleKey(2:6) == "B0"));
+
+            cfg_nodup = cfg;
+            cfg_nodup.stage2.dedup_equivalent = false;
+            sel_nodup = zc1bit_resolve_stage2_variants(cfg_nodup, out_s1.paths);
             expected_non_b0 = rank_tbl.VariantKey(rank_tbl.RuleKey ~= "B0");
-            t.verifyEqual(sel_all.VariantKey(2:6), expected_non_b0(1:5));
+            t.verifyEqual(sel_nodup.VariantKey(2:6), expected_non_b0(1:5));
 
             cfg_distinct = cfg;
             cfg_distinct.stage2.distinct_rules_only = true;

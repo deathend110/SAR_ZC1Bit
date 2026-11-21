@@ -571,8 +571,11 @@ RemoveDC = variant_specs.RemoveDC;
 VariantKey = variant_specs.VariantKey;
 
 ConfigCount = zeros(n_var, 1);
+UpsampledConfigCount = zeros(n_var, 1);
 MeanPSNR = zeros(n_var, 1);
 MeanSSIM = zeros(n_var, 1);
+UpsampledMeanSSIM = zeros(n_var, 1);
+UpsampledMeanPSNR = zeros(n_var, 1);
 MeanAbsENLDiff = nan(n_var, 1);
 MeanZeroRatio = zeros(n_var, 1);
 MeanAbsBias = zeros(n_var, 1);
@@ -587,6 +590,15 @@ for idx = 1:n_var
     ConfigCount(idx) = height(sub);
     MeanPSNR(idx) = mean(sub.PSNR_Mean);
     MeanSSIM(idx) = mean(sub.SSIM_Mean);
+    up_sub = sub(sub.Q > 1, :);
+    UpsampledConfigCount(idx) = height(up_sub);
+    if ~isempty(up_sub)
+        UpsampledMeanSSIM(idx) = mean(up_sub.SSIM_Mean);
+        UpsampledMeanPSNR(idx) = mean(up_sub.PSNR_Mean);
+    else
+        UpsampledMeanSSIM(idx) = MeanSSIM(idx);
+        UpsampledMeanPSNR(idx) = MeanPSNR(idx);
+    end
     if any(~isnan(sub.AbsENLDiff_Mean))
         MeanAbsENLDiff(idx) = mean(sub.AbsENLDiff_Mean, "omitnan");
     end
@@ -602,12 +614,14 @@ for idx = 1:n_var
 end
 
 ranking_table = table( ...
-    RuleKey, DecisionMode, RemoveDC, VariantKey, ConfigCount, ...
+    RuleKey, DecisionMode, RemoveDC, VariantKey, ConfigCount, UpsampledConfigCount, ...
+    SSIMSigWinCount, SSIMWinCount, UpsampledMeanSSIM, UpsampledMeanPSNR, ...
     MeanSSIM, MeanPSNR, MeanAbsENLDiff, MeanZeroRatio, MeanAbsBias, ...
-    MeanDeltaSSIM, MeanDeltaPSNR, MeanDeltaAbsENLDiff, SSIMWinCount, SSIMSigWinCount);
+    MeanDeltaSSIM, MeanDeltaPSNR, MeanDeltaAbsENLDiff);
 ranking_table = sortrows(ranking_table, ...
-    {'MeanSSIM', 'MeanPSNR', 'MeanAbsENLDiff', 'VariantKey'}, ...
-    {'descend', 'descend', 'ascend', 'ascend'});
+    {'SSIMSigWinCount', 'SSIMWinCount', 'UpsampledMeanSSIM', 'UpsampledMeanPSNR', ...
+    'MeanSSIM', 'MeanAbsENLDiff', 'RemoveDC', 'DecisionMode', 'VariantKey'}, ...
+    {'descend', 'descend', 'descend', 'descend', 'descend', 'ascend', 'ascend', 'ascend', 'ascend'});
 ranking_table.Rank = (1:height(ranking_table)).';
 ranking_table = movevars(ranking_table, "Rank", "Before", "RuleKey");
 end
