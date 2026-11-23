@@ -34,6 +34,7 @@ results_zc1bit/protocol/run_record.mat
 | `plot_transfer_ablation.m` | 独立重校准 − B0 参数直迁（测试集） | `figures/curves/ablation/transfer_vs_recalibration/` |
 | `render_best_unit_images.m` | 每个方法各自测试集最优单元的 SAR 图像 | `figures/images/best_unit/` |
 | `render_common_unit_images.m` | 固定共同单元、同一样本的 7 方法对比 | `figures/images/common_unit/` |
+| `plot_ta_sft_results.m` | TA-SFT 专题曲线、相偏鲁棒性与 SAR 拼图 | `ta_sft/figures/` |
 
 共享辅助函数（不需要直接运行）：
 

@@ -18,7 +18,8 @@
   - `parameters/`：存放本机 `FS60_params.mat`（Git 忽略）。
   - `reference/`：存放只读历史参考参数表与 70/20 样本/ROI 清单 CSV。
 - `tests/`：不依赖外部大数据集的轻量单元测试。
-- `docs/`：协议文档、技术手册与 [工作流使用说明](docs/WORKFLOW_USAGE.md)。
+- `docs/`：协议文档、技术手册、[实验结果报告](docs/experiment_report.md)、[工作流使用说明](docs/WORKFLOW_USAGE.md) 与 [TA-SFT 专题实验设计书](docs/ta_sft_experiment_design.md)。
+- [README_TA_SFT.md](README_TA_SFT.md)：阈值感知 SFT 1-bit 接收端重构（`TA-SFT`）专题使用说明。
 - `results_zc1bit/`：实验产物与断点目录（按 `protocol/`、`screen/`、`checkpoints/` 等子目录存放，Git 忽略）。
 - `tmp/`：工作区临时目录（`tmp/tests/`、`tmp/smoke/`、`tmp/scratch/`，Git 忽略），单元测试与临时中间产物均保存于工作区内，严禁写入 C 盘。
 

@@ -68,6 +68,18 @@ out = run_zc1bit_workflow(cfg);   % 或直接调用 run_zc1bit_screen(cfg)
 
 详细说明、可调参数与数据口径见 [scripts/README.md](../scripts/README.md)。
 
+### 2.5 阈值感知 SFT 1-bit 接收端重构专题（`run_zc1bit_ta_sft`）
+
+在阶段二 `confirm` 生成 `results_zc1bit/locked/locked_params.csv` 后，可独立运行 TA-SFT 专题实验，固定前端 `B0_par_raw` 最优 SFT 参数不变，在全部 18 个 SFT 单元（`RSFT` 9 单元 + `ASFT` 9 单元）上对比 `B0_par_raw`、`R1_par_raw` 与 5 个阈值感知方案（`TA1_gate_zc`、`TA2_anchor_zc`、`TA2_anchor_q5`、`TA3_mmse_fixed`、`TA3_mmse_est`），并附带 4 个代表单元的初相失配鲁棒性消融：
+
+```matlab
+cfg = zc1bit_config();
+out_ta = run_zc1bit_ta_sft(cfg, "all");   % 顺序执行 35 校准寻优 -> 35 测试评估与相偏消融
+run("scripts/plot_ta_sft_results.m");      % 输出全部曲线与 SAR 对比图至 results_zc1bit/ta_sft/figures/
+```
+
+- **结果隔离**：所有产物与断点均保存在 `results_zc1bit/ta_sft/` 与 `results_zc1bit/checkpoints/ta_sft/`，不改动阶段一/二已有结果与图表。
+
 ## 3. 轻量单元测试
 
 `tests/` 下的所有测试不依赖外部 `SAR Full PSF` 大数据集，使用小型合成信号并在工作区 `<repo_root>/tmp/tests/` 下创建隔离临时目录（测试退出自动清理，不写入 C 盘），验证核心数学性质、快速成像等价性及断点恢复逻辑：

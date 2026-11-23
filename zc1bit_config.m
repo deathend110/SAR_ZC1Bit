@@ -89,6 +89,25 @@ cfg.stage2.phi0 = 0;
 cfg.stage2.include_b0_transfer = true;
 cfg.stage2.leakage_threshold_ratio = 0.35;
 cfg.stage2.use_fast_path = true;
+
+% 阈值感知 SFT 1-bit 接收端重构专题配置（严格隔离独立，不改动阶段一/二原有配置）
+cfg.ta_sft = struct();
+cfg.ta_sft.branches = ["range_branch", "azimuth_branch"];
+cfg.ta_sft.range_allocations = [(1:9).', ones(9, 1)];
+cfg.ta_sft.azimuth_allocations = [ones(9, 1), (1:9).'];
+cfg.ta_sft.range_threshold_types = "RSFT";
+cfg.ta_sft.azimuth_threshold_types = "ASFT";
+cfg.ta_sft.baseline_locked_file = "";
+cfg.ta_sft.tau_grid = round([0.05, 0.1:0.1:1.0], 6);
+cfg.ta_sft.alpha_grid = round([0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0], 6);
+cfg.ta_sft.gamma_grid = round([0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.5, 1.8, 2.2, 2.6], 6);
+cfg.ta_sft.phase_mismatch_deg = [0, 5, 10, 15, 30, 45, 90];
+cfg.ta_sft.phase_mismatch_units = [ ...
+    "rb_R4A1_range_rsft", "rb_R9A1_range_rsft", ...
+    "ab_R1A4_azimuth_asft", "ab_R1A9_azimuth_asft"];
+cfg.ta_sft.leakage_groups = ["R1A1", "R4A1", "R9A1", "R1A4", "R1A9"];
+cfg.ta_sft.leakage_threshold_ratio = 0.35;
+cfg.ta_sft.use_fast_path = true;
 end
 
 function lp = read_local_paths(local_paths_file)
