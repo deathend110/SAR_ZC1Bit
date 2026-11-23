@@ -108,6 +108,28 @@ cfg.ta_sft.phase_mismatch_units = [ ...
 cfg.ta_sft.leakage_groups = ["R1A1", "R4A1", "R9A1", "R1A4", "R1A9"];
 cfg.ta_sft.leakage_threshold_ratio = 0.35;
 cfg.ta_sft.use_fast_path = true;
+
+% 严格伪 1.5-bit（三电平 {+1,0,-1}）SFT 专题配置（完全独立于 stage1/stage2/ta_sft）
+cfg.sft_p15 = struct();
+cfg.sft_p15.branches = ["range_branch", "azimuth_branch"];
+cfg.sft_p15.range_allocations = [(1:9).', ones(9, 1)];
+cfg.sft_p15.azimuth_allocations = [ones(9, 1), (1:9).'];
+cfg.sft_p15.range_threshold_types = "RSFT";
+cfg.sft_p15.azimuth_threshold_types = "ASFT";
+cfg.sft_p15.baseline_locked_file = "";
+cfg.sft_p15.p1_tau_grid = round([0.1:0.1:0.8, 0.85, 0.9, 0.95, 1.0], 6);
+cfg.sft_p15.p2_w1_lmin_grid = [1, 2, 3, 4, 5, 6, inf];
+cfg.sft_p15.p2_w2_lmin_grid = [5, 6, 7];
+cfg.sft_p15.p3_tau_grid = round([0.2:0.1:1.0], 6);
+cfg.sft_p15.p4_tau_grid = round([0.5, 0.7, 0.8, 0.85, 0.9, 0.95, 1.0], 6);
+cfg.sft_p15.p4_lmin_grid = [2, 3, 4, 5, inf];
+cfg.sft_p15.phase_mismatch_deg = [0, 5, 10, 15, 30, 45, 90];
+cfg.sft_p15.phase_mismatch_units = [ ...
+    "rb_R4A1_range_rsft", "rb_R9A1_range_rsft", ...
+    "ab_R1A4_azimuth_asft", "ab_R1A9_azimuth_asft"];
+cfg.sft_p15.leakage_groups = ["R1A1", "R4A1", "R9A1", "R1A4", "R1A9"];
+cfg.sft_p15.leakage_threshold_ratio = 0.35;
+cfg.sft_p15.use_fast_path = true;
 end
 
 function lp = read_local_paths(local_paths_file)

@@ -12,6 +12,7 @@ p.stats = fullfile(p.root, "stats");
 p.figures = fullfile(p.root, "figures");
 p.checkpoints = fullfile(p.root, "checkpoints");
 p.ta_sft = fullfile(p.root, "ta_sft");
+p.sft_p15 = fullfile(p.root, "sft_p15");
 if isfield(cfg, "tmp_root") && strlength(string(cfg.tmp_root)) > 0
     p.tmp = string(cfg.tmp_root);
 elseif isfield(cfg, "repo_root") && strlength(string(cfg.repo_root)) > 0
